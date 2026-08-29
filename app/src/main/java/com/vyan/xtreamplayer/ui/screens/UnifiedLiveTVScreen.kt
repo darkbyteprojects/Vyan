@@ -10,7 +10,9 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -133,26 +135,21 @@ object UnifiedSearchManager {
 
         currentSearchJob = searchScope.launch {
             try {
-                // FIX: If Unified Mode is opened first, force load the Extreme Registry config
                 if (ExtremeSourceRegistry.ALL_SOURCES.isEmpty()) {
                     ExtremeSourceRegistry.loadMasterSources(context)
                 }
 
                 val appPrefs = context.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
 
-                // EXTREME PREFS
                 val unifiedDisabledExtreme = appPrefs.getStringSet("unified_disabled_extreme_sources", emptySet()) ?: emptySet()
-                val activeExtremeSources = appPrefs.getStringSet("selected_extreme_sources", null) ?: ExtremeSourceRegistry.ALL_SOURCES.map { it.id }.toSet()
+                val activeExtremeSources = appPrefs.getStringSet("selected_extreme_sources", emptySet()) ?: emptySet()
 
-                // PLAYLIST PREFS
                 val explicitlyDisabledPlaylists = appPrefs.getStringSet("unified_disabled_playlists", emptySet()) ?: emptySet()
                 val explicitlySelectedPlaylists = appPrefs.getStringSet("unified_selected_playlists", null)
                     ?: appPrefs.getStringSet("unified_enabled_playlists", null)
 
-                // PORTAL PREFS
                 val unifiedUsePortals = appPrefs.getBoolean("unified_use_discovered_portals", true)
 
-                // Load custom extreme sources
                 val customJsonStr = appPrefs.getString("custom_extreme_sources", "[]") ?: "[]"
                 val customConfigsList = mutableListOf<ExtremeSourceConfig>()
                 try {
@@ -186,7 +183,6 @@ object UnifiedSearchManager {
                     }
                 }
 
-                // FIX: Retrieve custom concurrency limit (default 1 to completely eliminate lag)
                 val concurrencyLimit = appPrefs.getInt("unified_search_concurrency_limit", 1)
                 val searchConcurrencyLimit = Semaphore(concurrencyLimit)
 
@@ -499,22 +495,28 @@ fun UnifiedLiveTVScreen(
     accountManager: AccountManager,
     onPlayUnifiedSources: (channelName: String, sources: List<UnifiedSource>) -> Unit
 ) {
-    var selectedProvider by remember { mutableStateOf<UnifiedProviderDef?>(null) }
+    // PERFECT MEMORY: explicitly save selected provider ID to survive navigation
+    var selectedProviderId by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectedProvider = UnifiedConfig.providers.find { it.id == selectedProviderId }
+
+    // PERFECT MEMORY: explicitly save Grid State
+    val gridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
+
     val premiumBg = Color(0xFF09090B)
     val premiumSurface = Color(0xFF18181B)
     val premiumAccent = Color(0xFFFAFAFA)
     val premiumTextSec = Color(0xFFA1A1AA)
 
     BackHandler(enabled = selectedProvider != null) {
-        selectedProvider = null
+        selectedProviderId = null
     }
 
     if (selectedProvider != null) {
         UnifiedCategoryScreen(
-            provider = selectedProvider!!,
+            provider = selectedProvider,
             accountManager = accountManager,
             onPlayUnifiedSources = onPlayUnifiedSources,
-            onBack = { selectedProvider = null }
+            onBack = { selectedProviderId = null }
         )
     } else {
         Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
@@ -529,6 +531,7 @@ fun UnifiedLiveTVScreen(
 
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 160.dp),
+                    state = gridState, // <-- Restores scroll memory
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     contentPadding = PaddingValues(bottom = 40.dp)
@@ -538,7 +541,7 @@ fun UnifiedLiveTVScreen(
                         val gradient = UnifiedConfig.gradients[index % UnifiedConfig.gradients.size]
 
                         Card(
-                            onClick = { selectedProvider = provider },
+                            onClick = { selectedProviderId = provider.id },
                             modifier = Modifier.fillMaxWidth().height(130.dp),
                             colors = CardDefaults.cardColors(containerColor = premiumSurface),
                             shape = RoundedCornerShape(20.dp)
@@ -577,8 +580,11 @@ fun UnifiedCategoryScreen(
     val premiumTextSec = Color(0xFFA1A1AA)
     val context = LocalContext.current
 
-    var searchQuery by remember { mutableStateOf("") }
+    // PERFECT MEMORY: Explicitly save search query, expanded state, and List state
+    var searchQuery by rememberSaveable { mutableStateOf("") }
     var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
+    val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+
     var isLoading by remember { mutableStateOf(false) }
     var loadingChannelName by remember { mutableStateOf("") }
 
@@ -627,7 +633,11 @@ fun UnifiedCategoryScreen(
                 }
             }
 
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
+            LazyColumn(
+                state = listState, // <-- Restores scroll memory
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 40.dp)
+            ) {
                 items(provider.channels) { channelDef ->
                     if (searchQuery.isBlank() || channelDef.name.contains(searchQuery, ignoreCase = true)) {
                         Card(

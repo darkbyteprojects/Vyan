@@ -43,7 +43,13 @@ import com.vyan.xtreamplayer.network.XtreamApi
 import kotlinx.coroutines.launch
 
 @Composable
-fun MoviesScreen(accountManager: AccountManager, onPlayMovie: (VodMovie) -> Unit, onLoginClick: () -> Unit = {}, onSwitchPlaylistClick: () -> Unit, overrideAccount: UserAccount? = null) {
+fun MoviesScreen(
+    accountManager: AccountManager,
+    onPlayMovie: (VodMovie) -> Unit,
+    onLoginClick: () -> Unit = {},
+    onSwitchPlaylistClick: () -> Unit,
+    overrideAccount: UserAccount? = null
+) {
     val premiumBg = Color(0xFF09090B)
     val premiumSurface = Color(0xFF18181B)
     val premiumAccent = Color(0xFFFAFAFA)
@@ -62,16 +68,27 @@ fun MoviesScreen(accountManager: AccountManager, onPlayMovie: (VodMovie) -> Unit
     }
     val activeAccount = currentAccount
     val scope = rememberCoroutineScope()
-    var categories by remember { mutableStateOf<List<VodCategory>>(emptyList()) }
+
+    // PERFECT MEMORY: explicitly save selected category
     var selectedCategoryId by rememberSaveable { mutableStateOf("all") }
-    var movies by remember { mutableStateOf<List<VodMovie>>(emptyList()) }
-    var isLoadingCategories by remember { mutableStateOf(false) }
-    var isLoadingMovies by remember { mutableStateOf(false) }
+
+    val cacheKeyCat = activeAccount?.id ?: ""
+    val cacheKeyMovies = "${activeAccount?.id}_$selectedCategoryId"
+
+    // PERFECT MEMORY: Initialize data instantly from cache to prevent scroll loss
+    var categories by remember { mutableStateOf<List<VodCategory>>(DataCache.vodCategories[cacheKeyCat] ?: emptyList()) }
+    var movies by remember { mutableStateOf<List<VodMovie>>(DataCache.vodMovies[cacheKeyMovies] ?: emptyList()) }
+
+    var isLoadingCategories by remember { mutableStateOf(categories.isEmpty() && activeAccount != null) }
+    var isLoadingMovies by remember { mutableStateOf(movies.isEmpty() && activeAccount != null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    // PERFECT MEMORY: Explicitly save search query and grid state
     var searchQuery by rememberSaveable { mutableStateOf("") }
-    val gridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
-    var favoriteMovieIds by remember { mutableStateOf(accountManager.getFavoriteItems("fav_movies")) }
     var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
+    val gridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
+
+    var favoriteMovieIds by remember { mutableStateOf(accountManager.getFavoriteItems("fav_movies")) }
     var showSwitchPlaylistSheet by remember { mutableStateOf(false) }
 
     BackHandler(enabled = isSearchExpanded || selectedCategoryId != "all") {
@@ -80,9 +97,9 @@ fun MoviesScreen(accountManager: AccountManager, onPlayMovie: (VodMovie) -> Unit
 
     LaunchedEffect(activeAccount?.id) {
         if (activeAccount == null) return@LaunchedEffect
-        val cacheKey = activeAccount.id
-        if (DataCache.vodCategories.containsKey(cacheKey)) {
-            categories = DataCache.vodCategories[cacheKey] ?: emptyList()
+        val key = activeAccount.id
+        if (DataCache.vodCategories.containsKey(key)) {
+            categories = DataCache.vodCategories[key] ?: emptyList()
             return@LaunchedEffect
         }
         isLoadingCategories = true
@@ -91,7 +108,7 @@ fun MoviesScreen(accountManager: AccountManager, onPlayMovie: (VodMovie) -> Unit
                 val response = XtreamApi.service.getVodCategories(XtreamApi.formatApiUrl(activeAccount.url), activeAccount.username, activeAccount.pass)
                 if (response.isSuccessful && response.body() != null) {
                     categories = response.body()!!
-                    DataCache.vodCategories[cacheKey] = categories
+                    DataCache.vodCategories[key] = categories
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -103,9 +120,9 @@ fun MoviesScreen(accountManager: AccountManager, onPlayMovie: (VodMovie) -> Unit
 
     LaunchedEffect(activeAccount?.id, selectedCategoryId) {
         if (activeAccount == null) return@LaunchedEffect
-        val cacheKey = "${activeAccount.id}_$selectedCategoryId"
-        if (DataCache.vodMovies.containsKey(cacheKey)) {
-            movies = DataCache.vodMovies[cacheKey] ?: emptyList()
+        val key = "${activeAccount.id}_$selectedCategoryId"
+        if (DataCache.vodMovies.containsKey(key)) {
+            movies = DataCache.vodMovies[key] ?: emptyList()
             isLoadingMovies = false
             return@LaunchedEffect
         }
@@ -117,7 +134,7 @@ fun MoviesScreen(accountManager: AccountManager, onPlayMovie: (VodMovie) -> Unit
                 val response = XtreamApi.service.getVodStreams(XtreamApi.formatApiUrl(activeAccount.url), activeAccount.username, activeAccount.pass, targetCat)
                 if (response.isSuccessful && response.body() != null) {
                     movies = response.body()!!
-                    DataCache.vodMovies[cacheKey] = movies
+                    DataCache.vodMovies[key] = movies
                 } else {
                     errorMessage = "Failed to load VOD movies"
                 }

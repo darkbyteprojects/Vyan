@@ -27,14 +27,4 @@ object ExtremeHubAggregator {
         }
         deferreds.awaitAll()
     }
-
-    // This function was missing! It filters the channels by the selected brand.
-    fun getAggregatedBrand(brand: ExtremeBrandCategory): List<ExtremeChannel> {
-        val allChannels = cachedChannels.values.flatten()
-        return allChannels.filter { ch ->
-            val lower = ch.name.lowercase()
-            val hasExclude = brand.exclude.isNotEmpty() && brand.exclude.any { ex -> lower.contains(ex.lowercase()) }
-            !hasExclude && brand.keywords.any { kw -> lower.contains(kw.lowercase()) }
-        }.distinctBy { it.streamUrl }.sortedBy { it.name }
-    }
 }

@@ -1,9 +1,10 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 
 package com.vyan.xtreamplayer.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -35,7 +36,17 @@ fun HiddenCategoriesScreen(accountManager: AccountManager, onCategoryClick: (Liv
     var allCategories by remember { mutableStateOf<List<LiveCategory>>(emptyList()) }; var hiddenCategoryIds by remember { mutableStateOf(accountManager.getHiddenCategories()) }
     var isLoading by remember { mutableStateOf(true) }; var errorMessage by remember { mutableStateOf<String?>(null) }; var searchQuery by rememberSaveable { mutableStateOf("") }
 
-    BackHandler(enabled = searchQuery.isNotEmpty()) { searchQuery = "" }
+    var isEditMode by rememberSaveable { mutableStateOf(false) }
+    var selectedCategoryIds by rememberSaveable { mutableStateOf<Set<String>>(emptySet()) }
+
+    BackHandler(enabled = searchQuery.isNotEmpty() || isEditMode) {
+        if (isEditMode) {
+            isEditMode = false
+            selectedCategoryIds = emptySet()
+        } else {
+            searchQuery = ""
+        }
+    }
 
     fun loadCategories() {
         if (activeAccount == null) return
@@ -47,22 +58,40 @@ fun HiddenCategoriesScreen(accountManager: AccountManager, onCategoryClick: (Liv
     val hiddenCategories = remember(allCategories, hiddenCategoryIds, searchQuery) { val list = allCategories.filter { it.category_id in hiddenCategoryIds }; if (searchQuery.isBlank()) list else list.filter { it.category_name.contains(searchQuery, ignoreCase = true) } }
 
     Column(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding().padding(horizontal = 20.dp)) {
-        // FIXED: Top Padding reduced to 8.dp
-        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = premiumAccent) }
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = "Archive", color = premiumAccent, fontSize = 32.sp, fontWeight = FontWeight.Black)
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(text = "${hiddenCategories.size} Hidden Categories", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        if (isEditMode) {
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { isEditMode = false; selectedCategoryIds = emptySet() }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) { Icon(Icons.Default.Close, "Close", tint = premiumAccent) }
+                Spacer(modifier = Modifier.width(16.dp))
+                Text("${selectedCategoryIds.size} selected", color = premiumAccent, fontSize = 24.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                if (selectedCategoryIds.isNotEmpty()) {
+                    IconButton(
+                        onClick = {
+                            selectedCategoryIds.forEach { accountManager.unhideCategory(it) }
+                            hiddenCategoryIds = accountManager.getHiddenCategories()
+                            isEditMode = false
+                            selectedCategoryIds = emptySet()
+                        },
+                        modifier = Modifier.size(42.dp).clip(CircleShape).background(Color(0xFF27272A))
+                    ) { Icon(Icons.Default.Unarchive, "Unhide Selected", tint = premiumAccent) }
+                }
             }
+        } else {
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = premiumAccent) }
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "Archive", color = premiumAccent, fontSize = 32.sp, fontWeight = FontWeight.Black)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(text = "${hiddenCategories.size} Hidden Categories", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            TextField(
+                value = searchQuery, onValueChange = { searchQuery = it }, modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
+                placeholder = { Text("Search archived category...", color = premiumTextSec, fontSize = 15.sp) }, leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = premiumTextSec) },
+                trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumAccent) } },
+                shape = CircleShape, singleLine = true, colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurface, unfocusedContainerColor = premiumSurface, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
+            )
         }
-        TextField(
-            value = searchQuery, onValueChange = { searchQuery = it }, modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
-            placeholder = { Text("Search archived category...", color = premiumTextSec, fontSize = 15.sp) }, leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = premiumTextSec) },
-            trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumAccent) } },
-            shape = CircleShape, singleLine = true, colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurface, unfocusedContainerColor = premiumSurface, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
-        )
 
         if (isLoading) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumAccent) } }
         else if (hiddenCategories.isEmpty()) {
@@ -70,18 +99,42 @@ fun HiddenCategoriesScreen(accountManager: AccountManager, onCategoryClick: (Liv
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
                 items(hiddenCategories, key = { it.category_id }) { category ->
+                    val isSelected = selectedCategoryIds.contains(category.category_id)
                     Card(
-                        onClick = { onCategoryClick(category) }, modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)
+                        modifier = Modifier.fillMaxWidth().combinedClickable(
+                            onClick = {
+                                if (isEditMode) {
+                                    selectedCategoryIds = if (isSelected) selectedCategoryIds - category.category_id else selectedCategoryIds + category.category_id
+                                } else {
+                                    onCategoryClick(category)
+                                }
+                            },
+                            onLongClick = {
+                                isEditMode = true
+                                selectedCategoryIds = selectedCategoryIds + category.category_id
+                            }
+                        ),
+                        colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFF27272A) else premiumSurface),
+                        shape = RoundedCornerShape(20.dp),
+                        elevation = CardDefaults.cardElevation(0.dp)
                     ) {
                         Row(modifier = Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(premiumBg), contentAlignment = Alignment.Center) { Icon(Icons.Default.FolderZip, contentDescription = null, tint = premiumTextSec, modifier = Modifier.size(28.dp)) }
-                            Spacer(modifier = Modifier.width(16.dp))
+                            if (isEditMode) {
+                                Icon(if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, null, tint = if (isSelected) premiumAccent else premiumTextSec)
+                                Spacer(modifier = Modifier.width(16.dp))
+                            } else {
+                                Box(modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(premiumBg), contentAlignment = Alignment.Center) { Icon(Icons.Default.FolderZip, contentDescription = null, tint = premiumTextSec, modifier = Modifier.size(28.dp)) }
+                                Spacer(modifier = Modifier.width(16.dp))
+                            }
+
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(text = category.category_name, color = premiumAccent, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(text = "Tap to view & play", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                             }
-                            IconButton(onClick = { accountManager.unhideCategory(category.category_id); hiddenCategoryIds = accountManager.getHiddenCategories() }, modifier = Modifier.size(48.dp).clip(CircleShape).background(Color(0xFF27272A))) { Icon(Icons.Default.Unarchive, contentDescription = "Unhide Category", tint = premiumAccent, modifier = Modifier.size(24.dp)) }
+                            if (!isEditMode) {
+                                IconButton(onClick = { accountManager.unhideCategory(category.category_id); hiddenCategoryIds = accountManager.getHiddenCategories() }, modifier = Modifier.size(48.dp).clip(CircleShape).background(Color(0xFF27272A))) { Icon(Icons.Default.Unarchive, contentDescription = "Unhide Category", tint = premiumAccent, modifier = Modifier.size(24.dp)) }
+                            }
                         }
                     }
                 }

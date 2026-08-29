@@ -45,7 +45,13 @@ import com.vyan.xtreamplayer.network.XtreamApi
 import kotlinx.coroutines.launch
 
 @Composable
-fun SeriesScreen(accountManager: AccountManager, onPlayEpisode: (SeriesItem, Episode) -> Unit, onLoginClick: () -> Unit = {}, onSwitchPlaylistClick: () -> Unit, overrideAccount: UserAccount? = null) {
+fun SeriesScreen(
+    accountManager: AccountManager,
+    onPlayEpisode: (SeriesItem, Episode) -> Unit,
+    onLoginClick: () -> Unit = {},
+    onSwitchPlaylistClick: () -> Unit,
+    overrideAccount: UserAccount? = null
+) {
     val premiumBg = Color(0xFF09090B)
     val premiumSurface = Color(0xFF18181B)
     val premiumAccent = Color(0xFFFAFAFA)
@@ -64,29 +70,43 @@ fun SeriesScreen(accountManager: AccountManager, onPlayEpisode: (SeriesItem, Epi
     }
     val activeAccount = currentAccount
     val scope = rememberCoroutineScope()
-    var categories by remember { mutableStateOf<List<SeriesCategory>>(emptyList()) }
+
+    // PERFECT MEMORY: Explicitly save selected category
     var selectedCategoryId by rememberSaveable { mutableStateOf("all") }
-    var seriesList by remember { mutableStateOf<List<SeriesItem>>(emptyList()) }
-    var isLoadingSeries by remember { mutableStateOf(false) }
+
+    val cacheKeyCat = activeAccount?.id ?: ""
+    val cacheKeySeries = "${activeAccount?.id}_$selectedCategoryId"
+
+    // PERFECT MEMORY: Initialize data instantly from cache to prevent scroll loss
+    var categories by remember { mutableStateOf<List<SeriesCategory>>(DataCache.seriesCategories[cacheKeyCat] ?: emptyList()) }
+    var seriesList by remember { mutableStateOf<List<SeriesItem>>(DataCache.seriesItems[cacheKeySeries] ?: emptyList()) }
+
+    var isLoadingSeries by remember { mutableStateOf(seriesList.isEmpty() && activeAccount != null) }
+
+    // PERFECT MEMORY: Explicitly save search query and grid state
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
+    val gridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
+
     var selectedSeries by remember { mutableStateOf<SeriesItem?>(null) }
     var seriesDetails by remember { mutableStateOf<SeriesDetailsResponse?>(null) }
     var isLoadingDetails by remember { mutableStateOf(false) }
     var selectedSeasonNum by rememberSaveable { mutableStateOf("1") }
-    val gridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
+
     var favoriteSeriesIds by remember { mutableStateOf(accountManager.getFavoriteItems("fav_series")) }
-    var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
     var showSwitchPlaylistSheet by remember { mutableStateOf(false) }
 
     BackHandler(enabled = isSearchExpanded || selectedCategoryId != "all" || selectedSeries != null) {
-        if (selectedSeries != null) selectedSeries = null else if (isSearchExpanded) { isSearchExpanded = false; searchQuery = "" } else selectedCategoryId = "all"
+        if (selectedSeries != null) selectedSeries = null
+        else if (isSearchExpanded) { isSearchExpanded = false; searchQuery = "" }
+        else selectedCategoryId = "all"
     }
 
     LaunchedEffect(activeAccount?.id) {
         if (activeAccount == null) return@LaunchedEffect
-        val cacheKey = activeAccount.id
-        if (DataCache.seriesCategories.containsKey(cacheKey)) {
-            categories = DataCache.seriesCategories[cacheKey] ?: emptyList()
+        val key = activeAccount.id
+        if (DataCache.seriesCategories.containsKey(key)) {
+            categories = DataCache.seriesCategories[key] ?: emptyList()
             return@LaunchedEffect
         }
         scope.launch {
@@ -94,7 +114,7 @@ fun SeriesScreen(accountManager: AccountManager, onPlayEpisode: (SeriesItem, Epi
                 val response = XtreamApi.service.getSeriesCategories(XtreamApi.formatApiUrl(activeAccount.url), activeAccount.username, activeAccount.pass)
                 if (response.isSuccessful && response.body() != null) {
                     categories = response.body()!!
-                    DataCache.seriesCategories[cacheKey] = categories
+                    DataCache.seriesCategories[key] = categories
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -104,9 +124,9 @@ fun SeriesScreen(accountManager: AccountManager, onPlayEpisode: (SeriesItem, Epi
 
     LaunchedEffect(activeAccount?.id, selectedCategoryId) {
         if (activeAccount == null) return@LaunchedEffect
-        val cacheKey = "${activeAccount.id}_$selectedCategoryId"
-        if (DataCache.seriesItems.containsKey(cacheKey)) {
-            seriesList = DataCache.seriesItems[cacheKey] ?: emptyList()
+        val key = "${activeAccount.id}_$selectedCategoryId"
+        if (DataCache.seriesItems.containsKey(key)) {
+            seriesList = DataCache.seriesItems[key] ?: emptyList()
             isLoadingSeries = false
             return@LaunchedEffect
         }
@@ -117,7 +137,7 @@ fun SeriesScreen(accountManager: AccountManager, onPlayEpisode: (SeriesItem, Epi
                 val response = XtreamApi.service.getSeries(XtreamApi.formatApiUrl(activeAccount.url), activeAccount.username, activeAccount.pass, targetCat)
                 if (response.isSuccessful && response.body() != null) {
                     seriesList = response.body()!!
-                    DataCache.seriesItems[cacheKey] = seriesList
+                    DataCache.seriesItems[key] = seriesList
                 }
             } catch (e: Exception) {
                 e.printStackTrace()

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -107,9 +108,11 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
     val premiumRed = Color(0xFFE50914)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var currentSettingsPage by remember { mutableStateOf("main") }
-    val sharedPrefs = remember { context.getSharedPreferences("app_settings", Context.MODE_PRIVATE) }
 
+    // PERFECT MEMORY: Remembers the active settings page even if app goes to background
+    var currentSettingsPage by rememberSaveable { mutableStateOf("main") }
+
+    val sharedPrefs = remember { context.getSharedPreferences("app_settings", Context.MODE_PRIVATE) }
     val initialAppMode = remember { sharedPrefs.getString("active_app_mode", if (settingsManager.isLiveTvAutomatedMode) "advanced" else "basic") ?: "basic" }
 
     BackHandler(enabled = currentSettingsPage != "main") {
@@ -208,15 +211,15 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
             }
         }
         "app_mode" -> {
-            var isExtremeUnlocked by remember { mutableStateOf(sharedPrefs.getBoolean("is_extreme_unlocked", false)) }
-            val isVerifiedIndian by remember { mutableStateOf(sharedPrefs.getBoolean("is_verified_indian_network", false)) }
-            var activeAppMode by remember { mutableStateOf(sharedPrefs.getString("active_app_mode", if (settingsManager.isLiveTvAutomatedMode) "advanced" else "basic") ?: "basic") }
+            var isExtremeUnlocked by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("is_extreme_unlocked", false)) }
+            val isVerifiedIndian by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("is_verified_indian_network", false)) }
+            var activeAppMode by rememberSaveable { mutableStateOf(sharedPrefs.getString("active_app_mode", if (settingsManager.isLiveTvAutomatedMode) "advanced" else "basic") ?: "basic") }
 
             var showModeSheet by remember { mutableStateOf(false) }
             val sheetState = rememberModalBottomSheetState()
 
-            var seenExtreme by remember { mutableStateOf(sharedPrefs.getBoolean("seen_mode_extreme", false)) }
-            var seenUnified by remember { mutableStateOf(sharedPrefs.getBoolean("seen_mode_unified", false)) }
+            var seenExtreme by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("seen_mode_extreme", false)) }
+            var seenUnified by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("seen_mode_unified", false)) }
 
             val hasNewExtreme = isExtremeUnlocked && !seenExtreme
             val hasNewUnified = isExtremeUnlocked && isVerifiedIndian && !seenUnified
@@ -243,7 +246,6 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
 
                     val currentModeDetails = modes.find { it.first == activeAppMode } ?: modes[0]
 
-                    // MODAL BOTTOM SHEET TRIGGER CARD
                     Card(
                         onClick = {
                             showModeSheet = true
@@ -283,7 +285,6 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                         }
                     }
 
-                    // MODAL BOTTOM SHEET OVERLAY
                     if (showModeSheet) {
                         ModalBottomSheet(
                             onDismissRequest = { showModeSheet = false },
@@ -387,8 +388,7 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                     } else if (activeAppMode == "extreme") {
                         Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(24.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                             Column(modifier = Modifier.padding(20.dp)) {
-                                var extremeLiveTvBehavior by remember { mutableStateOf(sharedPrefs.getString("extreme_livetv_behavior", "extreme") ?: "extreme") }
-                                var selectedExtremeSources by remember { mutableStateOf(sharedPrefs.getStringSet("selected_extreme_sources", ExtremeSourceRegistry.ALL_SOURCES.map { it.id }.toSet()) ?: emptySet()) }
+                                var extremeLiveTvBehavior by rememberSaveable { mutableStateOf(sharedPrefs.getString("extreme_livetv_behavior", "extreme") ?: "extreme") }
 
                                 Text("Live TV Tab Behavior", fontWeight = FontWeight.Black, fontSize = 16.sp, color = premiumAccent)
                                 Text("Choose how the standard Live TV tab functions while in Extreme Mode.", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
@@ -408,66 +408,6 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                             colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumAccent, selectedLabelColor = premiumBg, containerColor = premiumSurface, labelColor = premiumTextSec),
                                             border = null
                                         )
-                                    }
-                                }
-
-                                HorizontalDivider(color = Color(0xFF27272A), modifier = Modifier.padding(vertical = 20.dp))
-
-                                var isSyncingSources by remember { mutableStateOf(false) }
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("Extreme Sources", fontWeight = FontWeight.Black, fontSize = 16.sp, color = premiumAccent)
-                                        Text("Select which sources to load into the Extreme Hub.", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 2.dp))
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            if (!isSyncingSources) {
-                                                isSyncingSources = true
-                                                scope.launch(Dispatchers.IO) {
-                                                    val activeConfigs = ExtremeSourceRegistry.ALL_SOURCES.filter { selectedExtremeSources.contains(it.id) }
-                                                    com.vyan.xtreamplayer.ui.screens.ExtremeHubAggregator.syncSources(activeConfigs)
-                                                    withContext(Dispatchers.Main) {
-                                                        isSyncingSources = false
-                                                        Toast.makeText(context, "Extreme Sources Reloaded", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.size(38.dp).clip(CircleShape).background(Color(0xFF27272A))
-                                    ) {
-                                        if (isSyncingSources) {
-                                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = premiumAccent)
-                                        } else {
-                                            Icon(Icons.Default.Refresh, contentDescription = "Reload Sources", tint = premiumAccent, modifier = Modifier.size(20.dp))
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(12.dp))
-
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    ExtremeSourceRegistry.ALL_SOURCES.forEach { source ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().clickable {
-                                                val newSet = if (selectedExtremeSources.contains(source.id)) selectedExtremeSources - source.id else selectedExtremeSources + source.id
-                                                selectedExtremeSources = newSet
-                                                sharedPrefs.edit().putStringSet("selected_extreme_sources", newSet).apply()
-                                                onAccountSwitched()
-                                            }.padding(vertical = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(source.name, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                                            Switch(
-                                                checked = selectedExtremeSources.contains(source.id),
-                                                onCheckedChange = { isChecked ->
-                                                    val newSet = if (isChecked) selectedExtremeSources + source.id else selectedExtremeSources - source.id
-                                                    selectedExtremeSources = newSet
-                                                    sharedPrefs.edit().putStringSet("selected_extreme_sources", newSet).apply()
-                                                    onAccountSwitched()
-                                                },
-                                                colors = SwitchDefaults.colors(checkedThumbColor = premiumBg, checkedTrackColor = premiumAccent, uncheckedThumbColor = premiumTextSec, uncheckedTrackColor = premiumBg, uncheckedBorderColor = premiumTextSec)
-                                            )
-                                        }
                                     }
                                 }
 
@@ -503,7 +443,7 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                 Text("Unified Mode Preferences", fontWeight = FontWeight.Black, fontSize = 16.sp, color = premiumAccent)
                                 Text("Toggle which sources are actively scanned and merged into the Unified Live TV tab.", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
 
-                                var searchConcurrencyLimit by remember { mutableIntStateOf(sharedPrefs.getInt("unified_search_concurrency_limit", 1)) }
+                                var searchConcurrencyLimit by rememberSaveable { mutableIntStateOf(sharedPrefs.getInt("unified_search_concurrency_limit", 1)) }
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -554,7 +494,7 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                 HorizontalDivider(color = Color(0xFF27272A))
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                var unifiedUsePortals by remember { mutableStateOf(sharedPrefs.getBoolean("unified_use_discovered_portals", true)) }
+                                var unifiedUsePortals by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("unified_use_discovered_portals", true)) }
                                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                     Text("Discovered Portals", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     Switch(
@@ -666,11 +606,11 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
             }
         }
         "edit_profile" -> {
-            var profileName by remember { mutableStateOf(editingProfile?.name ?: "") }
-            var useFreePortals by remember { mutableStateOf(editingProfile?.useFreePortals ?: true) }
-            var selectedPlaylists by remember { mutableStateOf(editingProfile?.playlistIds?.toSet() ?: emptySet()) }
-            var selectedCategories by remember { mutableStateOf(editingProfile?.categoryIds?.toSet() ?: emptySet()) }
-            var errorMsg by remember { mutableStateOf<String?>(null) }
+            var profileName by rememberSaveable { mutableStateOf(editingProfile?.name ?: "") }
+            var useFreePortals by rememberSaveable { mutableStateOf(editingProfile?.useFreePortals ?: true) }
+            var selectedPlaylists by rememberSaveable { mutableStateOf(editingProfile?.playlistIds?.toSet() ?: emptySet()) }
+            var selectedCategories by rememberSaveable { mutableStateOf(editingProfile?.categoryIds?.toSet() ?: emptySet()) }
+            var errorMsg by rememberSaveable { mutableStateOf<String?>(null) }
             val customCategoriesList = remember { settingsManager.getCustomCategories() }
 
             Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
@@ -742,10 +682,16 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
         }
         "custom_categories" -> {
             var customCategoriesList by remember { mutableStateOf(settingsManager.getCustomCategories()) }
-            var isEditMode by remember { mutableStateOf(false) }
-            var selectedCategories by remember { mutableStateOf<Set<String>>(emptySet()) }
+            var isEditMode by rememberSaveable { mutableStateOf(false) }
+            var selectedCategories by rememberSaveable { mutableStateOf<Set<String>>(emptySet()) }
             var showResetDialog by remember { mutableStateOf(false) }
             val gridState = rememberLazyGridState()
+
+            // PERFECT MEMORY: Nested BackHandler intercepts the back button to properly exit edit mode
+            BackHandler(enabled = isEditMode) {
+                isEditMode = false
+                selectedCategories = emptySet()
+            }
 
             Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
                 Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
@@ -813,13 +759,13 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
         }
         "edit_custom_category" -> {
             val scope = rememberCoroutineScope()
-            var catName by remember { mutableStateOf(editingCustomCategory?.name ?: "") }
-            var catKeywords by remember { mutableStateOf(editingCustomCategory?.keywords ?: "") }
-            var catExclude by remember { mutableStateOf(editingCustomCategory?.exclude ?: "") }
-            var catFilters by remember { mutableStateOf(editingCustomCategory?.filters ?: "") }
-            var selectedColorIndex by remember { mutableIntStateOf(editingCustomCategory?.colorThemeIndex ?: 0) }
-            var errorMsg by remember { mutableStateOf<String?>(null) }
-            var successMsg by remember { mutableStateOf<String?>(null) }
+            var catName by rememberSaveable { mutableStateOf(editingCustomCategory?.name ?: "") }
+            var catKeywords by rememberSaveable { mutableStateOf(editingCustomCategory?.keywords ?: "") }
+            var catExclude by rememberSaveable { mutableStateOf(editingCustomCategory?.exclude ?: "") }
+            var catFilters by rememberSaveable { mutableStateOf(editingCustomCategory?.filters ?: "") }
+            var selectedColorIndex by rememberSaveable { mutableIntStateOf(editingCustomCategory?.colorThemeIndex ?: 0) }
+            var errorMsg by rememberSaveable { mutableStateOf<String?>(null) }
+            var successMsg by rememberSaveable { mutableStateOf<String?>(null) }
             val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
                 if (uri != null) {
                     scope.launch(Dispatchers.IO) {
@@ -962,7 +908,7 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                                 Text(if (acc.type == AccountType.XTREAM) acc.url else if (acc.type == AccountType.M3U_URL) acc.url else "Local M3U File", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             }
                                         }
-                                        IconButton(onClick = { DataCache.removePortalData(null, acc.url, acc.username); accountManager.removeAccount(acc); accountsList = accountManager.getAccounts(); onAccountSwitched() }, modifier = Modifier.clip(CircleShape).background(Color(0xFF27272A))) { Icon(Icons.Default.Delete, "Delete", tint = premiumRed, modifier = Modifier.size(24.dp)) }
+                                        IconButton(onClick = { DataCache.removePortalData(context, acc.url, acc.username); accountManager.removeAccount(acc); accountsList = accountManager.getAccounts(); onAccountSwitched() }, modifier = Modifier.clip(CircleShape).background(Color(0xFF27272A))) { Icon(Icons.Default.Delete, "Delete", tint = premiumRed, modifier = Modifier.size(24.dp)) }
                                     }
                                 }
                             }
@@ -977,11 +923,11 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
         }
         "edit_playlist" -> {
             if (editingAccount != null) {
-                var editPass by remember { mutableStateOf(editingAccount!!.pass) }
-                var editServer by remember { mutableStateOf(editingAccount!!.url) }
-                var editAlias by remember { mutableStateOf(editingAccount!!.alias) }
-                var editUsername by remember { mutableStateOf(editingAccount!!.username) }
-                var showPassword by remember { mutableStateOf(false) }
+                var editPass by rememberSaveable { mutableStateOf(editingAccount!!.pass) }
+                var editServer by rememberSaveable { mutableStateOf(editingAccount!!.url) }
+                var editAlias by rememberSaveable { mutableStateOf(editingAccount!!.alias) }
+                var editUsername by rememberSaveable { mutableStateOf(editingAccount!!.username) }
+                var showPassword by rememberSaveable { mutableStateOf(false) }
 
                 Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
                     Column(modifier = Modifier.fillMaxSize()) {

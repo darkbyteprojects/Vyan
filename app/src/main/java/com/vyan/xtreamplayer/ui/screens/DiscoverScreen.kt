@@ -14,8 +14,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -66,8 +66,9 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel(), accountManager: A
     val prefs = context.getSharedPreferences("DiscoverPrefs", Context.MODE_PRIVATE)
     val deletedPrefs = context.getSharedPreferences("DeletedPortalsPrefs", Context.MODE_PRIVATE)
 
-    val mainListState = rememberLazyListState()
-    val folderListState = rememberLazyListState()
+    // PERFECT MEMORY: explicitly force saving the scroll index for both lists
+    val mainListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    val folderListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
 
     var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
     var searchQuery by rememberSaveable { mutableStateOf("") }; var selectedFolderUrl by rememberSaveable { mutableStateOf<String?>(null) }

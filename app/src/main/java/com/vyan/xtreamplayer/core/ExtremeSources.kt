@@ -22,14 +22,12 @@ data class ExtremeSourceConfig(
     val id: String,
     val name: String,
     val category: String = "General",
-    val groupId: String? = null,
     val url: String,
     val type: SourceType,
     val defaultUserAgent: String = "OTT Navigator",
     val defaultCategory: String = "Live TV",
     val filterKeyword: String? = null,
-    val image: String = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/JioTV_logo.svg/1024px-JioTV_logo.svg.png",
-    val parentSourceId: String? = null
+    val image: String = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/JioTV_logo.svg/1024px-JioTV_logo.svg.png"
 )
 
 data class ExtremeChannel(
@@ -44,8 +42,6 @@ data class ExtremeChannel(
 object ExtremeSourceRegistry {
     const val REMOTE_CONFIG_URL = "https://app-source-api.dbprojects.workers.dev/"
 
-    var groupImages: Map<String, String> = emptyMap()
-    // This acts as our Session-Only Cache. It resets to empty when the app closes.
     var ALL_SOURCES: List<ExtremeSourceConfig> = emptyList()
 
     private val resRegex = Regex("RESOLUTION=(\\d+x\\d+)")
@@ -57,12 +53,9 @@ object ExtremeSourceRegistry {
         .build()
 
     suspend fun loadMasterSources(context: Context): List<ExtremeSourceConfig> = withContext(Dispatchers.IO) {
-        // 1. If we already fetched it this session, return it instantly
         if (ALL_SOURCES.isNotEmpty()) {
             return@withContext ALL_SOURCES
         }
-
-        // 2. If it's empty (first open of the session), fetch fresh from Cloudflare API
         try {
             val request = Request.Builder()
                 .url(REMOTE_CONFIG_URL)
@@ -75,14 +68,12 @@ object ExtremeSourceRegistry {
                 if (!remoteBody.isNullOrEmpty()) {
                     val freshSources = parseMasterSourcesJson(remoteBody)
                     if (freshSources.isNotEmpty()) {
-                        // 3. Save it to our session cache variable and return it
                         ALL_SOURCES = freshSources
                         return@withContext freshSources
                     }
                 }
             }
         } catch (_: Exception) { }
-
         return@withContext emptyList()
     }
 
@@ -90,16 +81,8 @@ object ExtremeSourceRegistry {
         val list = mutableListOf<ExtremeSourceConfig>()
         try {
             val root = JSONObject(jsonStr)
-
-            val parsedImages = mutableMapOf<String, String>()
-            root.optJSONObject("groupImages")?.let { imgObj ->
-                imgObj.keys().forEach { key ->
-                    parsedImages[key] = imgObj.optString(key)
-                }
-            }
-            groupImages = parsedImages
-
             val sourcesArr = root.optJSONArray("sources") ?: JSONArray()
+
             for (i in 0 until sourcesArr.length()) {
                 val obj = sourcesArr.getJSONObject(i)
                 val typeStr = obj.optString("type", "M3U_INLINE_DRM")
@@ -114,13 +97,11 @@ object ExtremeSourceRegistry {
                         id = obj.getString("id"),
                         name = obj.getString("name"),
                         category = obj.optString("category", "General"),
-                        groupId = if (obj.isNull("groupId") || obj.optString("groupId").isBlank()) null else obj.getString("groupId"),
                         url = obj.getString("url"),
                         type = resolvedType,
                         defaultUserAgent = obj.optString("defaultUserAgent", "OTT Navigator"),
                         defaultCategory = obj.optString("defaultCategory", "Live TV"),
-                        image = obj.optString("image", "https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/JioTV_logo.svg/1024px-JioTV_logo.svg.png"),
-                        parentSourceId = if (obj.isNull("parentSourceId") || obj.optString("parentSourceId").isBlank()) null else obj.getString("parentSourceId")
+                        image = obj.optString("image", "https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/JioTV_logo.svg/1024px-JioTV_logo.svg.png")
                     )
                 )
             }
@@ -178,7 +159,6 @@ object ExtremeSourceRegistry {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            e.printStackTrace()
             return@withContext emptyList()
         }
     }
@@ -194,44 +174,62 @@ object ExtremeSourceRegistry {
                 val obj = JSONObject(trimmed)
                 parseJsonObjectRecursive(obj, channels, source)
             }
-        } catch (e: Throwable) {
-            e.printStackTrace()
-        }
+        } catch (_: Throwable) { }
         return channels
     }
 
-    private fun parseJsonArrayRecursive(arr: JSONArray, channels: MutableList<ExtremeChannel>, source: ExtremeSourceConfig) {
+    private fun parseJsonArrayRecursive(
+        arr: JSONArray,
+        channels: MutableList<ExtremeChannel>,
+        source: ExtremeSourceConfig,
+        parentName: String = "",
+        parentLogo: String = "",
+        parentGroup: String = ""
+    ) {
         for (i in 0 until arr.length()) {
             val item = arr.opt(i)
-            if (item is JSONObject) {
-                parseJsonObjectRecursive(item, channels, source)
-            } else if (item is JSONArray) {
-                parseJsonArrayRecursive(item, channels, source)
-            }
+            if (item is JSONObject) parseJsonObjectRecursive(item, channels, source, parentName, parentLogo, parentGroup)
+            else if (item is JSONArray) parseJsonArrayRecursive(item, channels, source, parentName, parentLogo, parentGroup)
         }
     }
 
-    private fun parseJsonObjectRecursive(obj: JSONObject, channels: MutableList<ExtremeChannel>, source: ExtremeSourceConfig) {
-        val streamUrl = listOf("stream_url", "playbackurl", "channel_url", "videourl", "mpd", "url", "mpd_url", "link", "play_url")
+    private fun parseJsonObjectRecursive(
+        obj: JSONObject,
+        channels: MutableList<ExtremeChannel>,
+        source: ExtremeSourceConfig,
+        parentName: String = "",
+        parentLogo: String = "",
+        parentGroup: String = ""
+    ) {
+        val streamUrl = listOf("stream_url", "playbackurl", "channel_url", "videourl", "mpd", "url", "mpd_url", "link", "play_url", "m3u8")
             .map { obj.optString(it, "") }
             .firstOrNull { it.isNotBlank() && it != "null" } ?: ""
 
-        if (streamUrl.isNotBlank()) {
-            val name = listOf("channel_name", "channelname", "name", "title", "content_title", "match_name", "event_name")
-                .map { obj.optString(it, "") }
-                .firstOrNull { it.isNotBlank() && it != "null" } ?: "Channel"
+        val localName = listOf("channel_name", "channelname", "name", "title", "content_title", "match_name", "event_name")
+            .map { obj.optString(it, "") }
+            .firstOrNull { it.isNotBlank() && it != "null" } ?: parentName
 
-            val logo = listOf("channel_image", "logo", "cover_image", "imageurl", "src", "image", "thumbnail")
-                .map { obj.optString(it, "") }
-                .firstOrNull { it.isNotBlank() && it != "null" } ?: source.image
+        val localLogo = listOf("channel_image", "logo", "cover_image", "imageurl", "src", "image", "thumbnail", "poster_image")
+            .map { obj.optString(it, "") }
+            .firstOrNull { it.isNotBlank() && it != "null" } ?: parentLogo
 
-            val group = listOf("category", "event_category", "group")
-                .map { obj.optString(it, "") }
-                .firstOrNull { it.isNotBlank() && it != "null" } ?: source.defaultCategory
+        val localGroup = listOf("category", "event_category", "group", "stage")
+            .map { obj.optString(it, "") }
+            .firstOrNull { it.isNotBlank() && it != "null" } ?: parentGroup
 
+        // Only add if URL starts with http to prevent crashes from "Not Available" strings
+        if (streamUrl.startsWith("http", ignoreCase = true)) {
             val cookie = obj.optString("cookie", "").trim()
             val rawKeyId = listOf("keyId", "key_id", "license_url", "clearkey", "license").map { obj.optString(it, "") }.firstOrNull { it.isNotBlank() } ?: ""
-            val key = obj.optString("key", "").let { if (it == "null") "" else it }
+            val rawKey = obj.optString("key", "").let { if (it == "null") "" else it }
+
+            var finalKeyId = rawKeyId
+            var finalKey = rawKey
+
+            if (finalKeyId.isEmpty() && rawKey.contains(":")) {
+                finalKeyId = rawKey.substringBefore(":")
+                finalKey = rawKey.substringAfter(":")
+            }
 
             val headerMap = mutableMapOf<String, String>()
             val headersObj = obj.optJSONObject("headers")
@@ -239,22 +237,47 @@ object ExtremeSourceRegistry {
                 headersObj.keys().forEach { k -> headerMap[k] = headersObj.optString(k) }
             }
 
+            listOf("referer", "origin", "user-agent", "user_agent").forEach { k ->
+                val v = obj.optString(k, "")
+                if (v.isNotBlank() && v != "null") {
+                    if (!k.equals("user-agent", ignoreCase = true) && !k.equals("user_agent", ignoreCase = true)) {
+                        headerMap[k.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }] = v
+                    }
+                }
+            }
+
             channels.add(
                 ExtremeChannel(
-                    id = streamUrl.hashCode().toString(), name = name, group = group, logo = logo,
-                    streamUrl = streamUrl, userAgent = obj.optString("user_agent", source.defaultUserAgent),
-                    cookie = cookie, cookieExpires = extractCookieExpiry(cookie), keyId = rawKeyId, key = key,
-                    sourceName = source.name, headers = headerMap.toMap()
+                    id = streamUrl.hashCode().toString(),
+                    name = localName.ifEmpty { "Channel" },
+                    group = localGroup.ifEmpty { source.defaultCategory },
+                    logo = localLogo.ifEmpty { source.image },
+                    streamUrl = streamUrl,
+                    userAgent = obj.optString("user_agent", obj.optString("user-agent", source.defaultUserAgent)),
+                    cookie = cookie,
+                    cookieExpires = extractCookieExpiry(cookie),
+                    keyId = finalKeyId,
+                    key = finalKey,
+                    sourceName = source.name,
+                    headers = headerMap.toMap()
                 )
             )
         }
 
-        val keysToCheck = listOf("channeldata", "channels", "data", "results", "posts", "items", "list", "Matches")
-        keysToCheck.forEach { k ->
-            val subObj = obj.optJSONObject(k)
-            if (subObj != null) parseJsonObjectRecursive(subObj, channels, source)
-            val subArr = obj.optJSONArray(k)
-            if (subArr != null) parseJsonArrayRecursive(subArr, channels, source)
+        obj.keys().forEach { key ->
+            val child = obj.opt(key)
+            if (child is JSONObject) {
+                val childName = if (localName.isNotBlank() && key !in listOf("headers", "drm", "license", "hindi", "english")) {
+                    "$localName - ${key.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }}"
+                } else if (key in listOf("hindi", "english")) {
+                    "$localName - ${key.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }}"
+                } else {
+                    localName
+                }
+                parseJsonObjectRecursive(child, channels, source, childName, localLogo, localGroup)
+            } else if (child is JSONArray) {
+                parseJsonArrayRecursive(child, channels, source, localName, localLogo, localGroup)
+            }
         }
     }
 
@@ -326,18 +349,6 @@ object ExtremeSourceRegistry {
                     val hParts = extra.split(":", limit = 2)
                     if (hParts.size == 2) currentHeaders[hParts[0].trim()] = hParts[1].trim()
                 }
-
-            } else if (line.startsWith("#EXTHTTP:")) {
-                try {
-                    val jsonStr = line.substringAfter(":")
-                    val jsonObj = JSONObject(jsonStr)
-                    jsonObj.keys().forEach { key ->
-                        val value = jsonObj.getString(key)
-                        if (key.equals("cookie", ignoreCase = true)) currentCookie = value
-                        if (key.equals("user-agent", ignoreCase = true)) currentUa = value
-                        currentHeaders[key] = value
-                    }
-                } catch (_: Throwable) {}
 
             } else if (!line.startsWith("#") && line.startsWith("http", ignoreCase = true)) {
                 val parts = line.split("|")

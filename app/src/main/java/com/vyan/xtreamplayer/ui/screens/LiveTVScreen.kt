@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 
 package com.vyan.xtreamplayer.ui.screens
 
@@ -8,14 +8,15 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -92,7 +93,6 @@ fun LiveTVScreen(
     val isExtremeLiveTv = overrideAccount == null && activeAppMode == "extreme" && extremeBehavior == "extreme"
     val isAdvancedMode = overrideAccount == null && (activeAppMode == "advanced" || (activeAppMode == "extreme" && extremeBehavior == "advanced"))
 
-    // TAB-SPECIFIC PLAYLIST SELECTION
     var currentAccount by remember {
         mutableStateOf(
             overrideAccount ?: run {
@@ -104,14 +104,11 @@ fun LiveTVScreen(
     var showSwitchPlaylistSheet by remember { mutableStateOf(false) }
 
     if (isExtremeLiveTv) {
-        ExtremeChannelsScreen(
-            settingsManager = settingsManager,
-            onPlayExtremeChannel = onPlayExtremeChannel
-        )
+        ExtremeChannelsScreen(settingsManager = settingsManager, onPlayExtremeChannel = onPlayExtremeChannel)
     } else if (isAdvancedMode) {
         var selectedFilter by rememberSaveable { mutableStateOf("All") }
         var brandSearchQuery by rememberSaveable { mutableStateOf("") }
-        val gridState = rememberLazyGridState()
+        val gridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
         var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
 
         BackHandler(enabled = isSearchExpanded || selectedFilter != "All") {
@@ -200,18 +197,35 @@ fun LiveTVScreen(
     } else {
         val activeAccount = currentAccount
         val scope = rememberCoroutineScope()
-        var categories by remember { mutableStateOf<List<LiveCategory>>(emptyList()) }
-        var isLoadingCategories by remember { mutableStateOf(false) }
+
+        val cacheKey = activeAccount?.id ?: ""
+        var categories by remember { mutableStateOf<List<LiveCategory>>(DataCache.liveCategories[cacheKey] ?: emptyList()) }
+        var isLoadingCategories by remember { mutableStateOf(categories.isEmpty() && activeAccount != null) }
+
         var searchQuery by rememberSaveable { mutableStateOf("") }
         var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
-        BackHandler(enabled = isSearchExpanded) { isSearchExpanded = false; searchQuery = "" }
+
+        // ADDED FOR MULTI-SELECT HIDING
+        var isEditMode by rememberSaveable { mutableStateOf(false) }
+        var selectedCategoryIds by rememberSaveable { mutableStateOf<Set<String>>(emptySet()) }
+
+        BackHandler(enabled = isSearchExpanded || isEditMode) {
+            if (isEditMode) {
+                isEditMode = false
+                selectedCategoryIds = emptySet()
+            } else {
+                isSearchExpanded = false
+                searchQuery = ""
+            }
+        }
+
         var hiddenCategoryIds by remember { mutableStateOf(accountManager.getHiddenCategories()) }
         var favoriteCategoryIds by remember { mutableStateOf(accountManager.getFavoriteCategories()) }
+
         val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
 
         LaunchedEffect(activeAccount?.id) {
             if (activeAccount == null) return@LaunchedEffect
-            val cacheKey = activeAccount.id
             if (DataCache.liveCategories.containsKey(cacheKey)) {
                 categories = DataCache.liveCategories[cacheKey] ?: emptyList()
                 return@LaunchedEffect
@@ -243,14 +257,34 @@ fun LiveTVScreen(
                 } catch (e: Exception) { e.printStackTrace() } finally { isLoadingCategories = false }
             }
         }
+
         val visibleCategories = remember(categories, hiddenCategoryIds, searchQuery, favoriteCategoryIds) {
             categories.filter { !hiddenCategoryIds.contains(it.category_id) && (searchQuery.isEmpty() || it.category_name.contains(searchQuery, ignoreCase = true)) }.sortedWith(compareByDescending { favoriteCategoryIds.contains(it.category_id) })
         }
 
         Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
             Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+
+                // TOP BAR WITH EDIT MODE
                 Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp).animateContentSize()) {
-                    if (isSearchExpanded) {
+                    if (isEditMode) {
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { isEditMode = false; selectedCategoryIds = emptySet() }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) { Icon(Icons.Default.Close, "Close", tint = premiumAccent) }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("${selectedCategoryIds.size} selected", color = premiumAccent, fontSize = 24.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                            if (selectedCategoryIds.isNotEmpty()) {
+                                IconButton(
+                                    onClick = {
+                                        selectedCategoryIds.forEach { accountManager.hideCategory(it) }
+                                        hiddenCategoryIds = accountManager.getHiddenCategories()
+                                        isEditMode = false
+                                        selectedCategoryIds = emptySet()
+                                    },
+                                    modifier = Modifier.size(42.dp).clip(CircleShape).background(Color(0xFF27272A))
+                                ) { Icon(Icons.Default.VisibilityOff, "Hide Selected", tint = premiumAccent) }
+                            }
+                        }
+                    } else if (isSearchExpanded) {
                         TextField(
                             value = searchQuery, onValueChange = { searchQuery = it }, modifier = Modifier.fillMaxWidth(),
                             placeholder = { Text("Search categories...", color = premiumTextSec, fontSize = 15.sp) },
@@ -290,7 +324,7 @@ fun LiveTVScreen(
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumAccent) }
                 } else {
                     LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
-                        if (hiddenCategoryIds.isNotEmpty()) {
+                        if (hiddenCategoryIds.isNotEmpty() && !isEditMode && searchQuery.isEmpty()) {
                             item {
                                 Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).clickable { onOpenArchivedFolder() }, colors = CardDefaults.cardColors(containerColor = Color(0xFF27272A)), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                                     Row(modifier = Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -301,16 +335,42 @@ fun LiveTVScreen(
                                 }
                             }
                         }
+
                         items(visibleCategories, key = { it.category_id }) { category ->
-                            Card(modifier = Modifier.fillMaxWidth().clickable { onCategoryClick(category) }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                            val isSelected = selectedCategoryIds.contains(category.category_id)
+                            Card(
+                                modifier = Modifier.fillMaxWidth().combinedClickable(
+                                    onClick = {
+                                        if (isEditMode) {
+                                            selectedCategoryIds = if (isSelected) selectedCategoryIds - category.category_id else selectedCategoryIds + category.category_id
+                                        } else {
+                                            onCategoryClick(category)
+                                        }
+                                    },
+                                    onLongClick = {
+                                        isEditMode = true
+                                        selectedCategoryIds = selectedCategoryIds + category.category_id
+                                    }
+                                ),
+                                colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFF27272A) else premiumSurface),
+                                shape = RoundedCornerShape(20.dp),
+                                elevation = CardDefaults.cardElevation(0.dp)
+                            ) {
                                 Row(modifier = Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                        Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(premiumBg), contentAlignment = Alignment.Center) { Icon(Icons.Default.Tv, null, tint = premiumTextSec, modifier = Modifier.size(24.dp)) }
-                                        Spacer(modifier = Modifier.width(16.dp))
+                                        if (isEditMode) {
+                                            Icon(if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, null, tint = if (isSelected) premiumAccent else premiumTextSec)
+                                            Spacer(modifier = Modifier.width(16.dp))
+                                        } else {
+                                            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(premiumBg), contentAlignment = Alignment.Center) { Icon(Icons.Default.Tv, null, tint = premiumTextSec, modifier = Modifier.size(24.dp)) }
+                                            Spacer(modifier = Modifier.width(16.dp))
+                                        }
                                         Text(category.category_name, fontWeight = FontWeight.Black, fontSize = 18.sp, color = premiumAccent, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
-                                    val isFav = favoriteCategoryIds.contains(category.category_id)
-                                    IconButton(onClick = { accountManager.toggleFavoriteCategory(category.category_id); favoriteCategoryIds = accountManager.getFavoriteCategories() }) { Icon(if (isFav) Icons.Default.Star else Icons.Default.StarBorder, contentDescription = "Favorite", tint = if (isFav) Color(0xFFFFD700) else premiumTextSec, modifier = Modifier.size(28.dp)) }
+                                    if (!isEditMode) {
+                                        val isFav = favoriteCategoryIds.contains(category.category_id)
+                                        IconButton(onClick = { accountManager.toggleFavoriteCategory(category.category_id); favoriteCategoryIds = accountManager.getFavoriteCategories() }) { Icon(if (isFav) Icons.Default.Star else Icons.Default.StarBorder, contentDescription = "Favorite", tint = if (isFav) Color(0xFFFFD700) else premiumTextSec, modifier = Modifier.size(28.dp)) }
+                                    }
                                 }
                             }
                         }

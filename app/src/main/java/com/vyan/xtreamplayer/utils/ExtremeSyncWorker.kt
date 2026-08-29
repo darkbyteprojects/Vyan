@@ -26,7 +26,6 @@ class ExtremeSyncWorker(appContext: Context, params: WorkerParameters) : Corouti
                             id = obj.optString("id"),
                             name = obj.optString("name"),
                             category = "Custom",
-                            groupId = if (gId.isNotBlank()) gId else null,
                             url = obj.optString("url"),
                             type = if (obj.optString("type", "M3U") == "M3U") com.vyan.xtreamplayer.core.SourceType.M3U_DIRECT else com.vyan.xtreamplayer.core.SourceType.JSON_WRAPPED
                         )

@@ -101,18 +101,36 @@ fun HitEpgRow(channel: AggregatedChannel) {
 @Composable
 fun AutoChannelsScreen(channelConfig: UserCustomCategory, accountManager: AccountManager, settingsManager: SettingsManager, onPlayChannel: (String, String, List<AggregatedChannel>) -> Unit, onBack: () -> Unit) {
     val premiumBg = Color(0xFF09090B); val premiumSurface = Color(0xFF18181B); val premiumAccent = Color(0xFFFAFAFA); val premiumTextSec = Color(0xFFA1A1AA); val premiumRed = Color(0xFFE50914)
-    val context = LocalContext.current; val scope = rememberCoroutineScope(); val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
-    val aggregatedChannels = remember { mutableStateListOf<AggregatedChannel>() }
-    var isLoading by remember { mutableStateOf(true) }; var isScrapingMore by remember { mutableStateOf(false) }; var scanJob by remember { mutableStateOf<Job?>(null) }
-    var isReverifying by remember { mutableStateOf(false) }; var reverifyProgress by remember { mutableStateOf("") }; var searchQuery by rememberSaveable { mutableStateOf("") }
-    var statusText by remember { mutableStateOf("Aggregating channels from all portals...") }; var isFolderView by remember { mutableStateOf(false) }; var expandedFolders by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var scrapeSource by remember { mutableStateOf(CatalogSource.BEST) }; var catalogAfter by remember { mutableStateOf<String?>(null) }
-    var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
-    val pendingPortals = remember { mutableListOf<ScrapedPortal>() }; val attemptedKeys = remember { mutableSetOf<String>() }
+    val context = LocalContext.current; val scope = rememberCoroutineScope()
 
+    // PERFECT MEMORY: Remembers exact scroll position when returning from the player
+    val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+
+    val aggregatedChannels = remember { mutableStateListOf<AggregatedChannel>() }
+    var isLoading by remember { mutableStateOf(true) }
+    var isScrapingMore by remember { mutableStateOf(false) }
+    var scanJob by remember { mutableStateOf<Job?>(null) }
+    var isReverifying by remember { mutableStateOf(false) }
+    var reverifyProgress by remember { mutableStateOf("") }
+
+    // PERFECT MEMORY: Remembers search query and folder view modes
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
+    var isFolderView by rememberSaveable { mutableStateOf(false) }
+
+    var statusText by remember { mutableStateOf("Aggregating channels from all portals...") }
+    var expandedFolders by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var scrapeSource by remember { mutableStateOf(CatalogSource.BEST) }
+    var catalogAfter by remember { mutableStateOf<String?>(null) }
+
+    val pendingPortals = remember { mutableListOf<ScrapedPortal>() }
+    val attemptedKeys = remember { mutableSetOf<String>() }
+
+    // INTELLIGENT BACK HANDLER
     BackHandler(enabled = isSearchExpanded || isFolderView || isScrapingMore) {
         if (isScrapingMore) { scanJob?.cancel(); isScrapingMore = false; isLoading = false; statusText = "Scan stopped." }
-        else if (isSearchExpanded) { isSearchExpanded = false; searchQuery = "" } else if (isFolderView) { isFolderView = false }
+        else if (isSearchExpanded) { isSearchExpanded = false; searchQuery = "" }
+        else if (isFolderView) { isFolderView = false }
     }
 
     fun loadInitialChannels() {

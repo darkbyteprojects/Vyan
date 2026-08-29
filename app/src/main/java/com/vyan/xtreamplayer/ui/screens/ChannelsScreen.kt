@@ -37,32 +37,80 @@ import com.vyan.xtreamplayer.network.XtreamApi
 import kotlinx.coroutines.launch
 
 @Composable
-fun ChannelsScreen(categoryName: String, categoryId: String, accountManager: AccountManager, onPlayChannel: (LiveChannel) -> Unit, onBack: () -> Unit, overrideAccount: UserAccount? = null) {
-    val premiumBg = Color(0xFF09090B); val premiumSurface = Color(0xFF18181B); val premiumAccent = Color(0xFFFAFAFA); val premiumTextSec = Color(0xFFA1A1AA); val premiumRed = Color(0xFFE50914)
-    val activeAccount = overrideAccount ?: accountManager.getActiveAccount(); val scope = rememberCoroutineScope()
-    var channels by remember { mutableStateOf<List<LiveChannel>>(emptyList()) }; var isLoading by remember { mutableStateOf(true) }; var errorMessage by remember { mutableStateOf<String?>(null) }
-    var searchQuery by rememberSaveable { mutableStateOf("") }; val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
-    var favoriteChannelIds by remember { mutableStateOf(accountManager.getFavoriteItems("fav_channels")) }
-    var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
+fun ChannelsScreen(
+    categoryName: String,
+    categoryId: String,
+    accountManager: AccountManager,
+    onPlayChannel: (LiveChannel) -> Unit,
+    onBack: () -> Unit,
+    overrideAccount: UserAccount? = null
+) {
+    val premiumBg = Color(0xFF09090B)
+    val premiumSurface = Color(0xFF18181B)
+    val premiumAccent = Color(0xFFFAFAFA)
+    val premiumTextSec = Color(0xFFA1A1AA)
+    val premiumRed = Color(0xFFE50914)
 
-    BackHandler(enabled = isSearchExpanded) { isSearchExpanded = false; searchQuery = "" }
+    val activeAccount = overrideAccount ?: accountManager.getActiveAccount()
+    val scope = rememberCoroutineScope()
+
+    val cacheKey = "${activeAccount?.id}_$categoryId"
+
+    // PERFECT MEMORY: Initialize data instantly from cache so the scroll state can restore on frame 1
+    var channels by remember { mutableStateOf<List<LiveChannel>>(DataCache.liveChannels[cacheKey] ?: emptyList()) }
+    var isLoading by remember { mutableStateOf(channels.isEmpty()) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
+    val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+
+    var favoriteChannelIds by remember { mutableStateOf(accountManager.getFavoriteItems("fav_channels")) }
+
+    BackHandler(enabled = isSearchExpanded) {
+        isSearchExpanded = false
+        searchQuery = ""
+    }
 
     fun loadChannels(forceRefresh: Boolean = false) {
         if (activeAccount == null) return
-        val cacheKey = "${activeAccount.id}_$categoryId"
-        if (!forceRefresh && DataCache.liveChannels.containsKey(cacheKey)) { channels = DataCache.liveChannels[cacheKey] ?: emptyList(); isLoading = false; return }
-        if (activeAccount.type != AccountType.XTREAM) { channels = DataCache.liveChannels[cacheKey] ?: emptyList(); isLoading = false; return }
-        isLoading = true; errorMessage = null
+        if (!forceRefresh && channels.isNotEmpty()) {
+            isLoading = false
+            return
+        }
+
+        if (activeAccount.type != AccountType.XTREAM) {
+            channels = DataCache.liveChannels[cacheKey] ?: emptyList()
+            isLoading = false
+            return
+        }
+
+        isLoading = true
+        errorMessage = null
         scope.launch {
             try {
                 val response = XtreamApi.service.getLiveStreams(XtreamApi.formatApiUrl(activeAccount.url), activeAccount.username, activeAccount.pass, categoryId)
-                if (response.isSuccessful && response.body() != null) { val result = response.body()!!; channels = result; DataCache.liveChannels[cacheKey] = result } else { errorMessage = "Failed to load channels (Code ${response.code()})" }
-            } catch (e: Exception) { errorMessage = "Connection error: ${e.localizedMessage ?: "Unable to connect"}" } finally { isLoading = false }
+                if (response.isSuccessful && response.body() != null) {
+                    val result = response.body()!!
+                    channels = result
+                    DataCache.liveChannels[cacheKey] = result
+                } else {
+                    errorMessage = "Failed to load channels (Code ${response.code()})"
+                }
+            } catch (e: Exception) {
+                errorMessage = "Connection error: ${e.localizedMessage ?: "Unable to connect"}"
+            } finally {
+                isLoading = false
+            }
         }
     }
+
     LaunchedEffect(categoryId) { loadChannels() }
 
-    val filteredChannels = remember(channels, searchQuery, favoriteChannelIds) { val list = if (searchQuery.isBlank()) channels else channels.filter { it.name.contains(searchQuery, ignoreCase = true) }; list.sortedWith(compareByDescending { channel -> favoriteChannelIds.contains(channel.stream_id.toString()) }) }
+    val filteredChannels = remember(channels, searchQuery, favoriteChannelIds) {
+        val list = if (searchQuery.isBlank()) channels else channels.filter { it.name.contains(searchQuery, ignoreCase = true) }
+        list.sortedWith(compareByDescending { channel -> favoriteChannelIds.contains(channel.stream_id.toString()) })
+    }
 
     Column(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding().padding(horizontal = 20.dp)) {
 
@@ -91,8 +139,9 @@ fun ChannelsScreen(categoryName: String, categoryId: String, accountManager: Acc
             }
         }
 
-        if (isLoading) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumAccent) } }
-        else if (errorMessage != null) {
+        if (isLoading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumAccent) }
+        } else if (errorMessage != null) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.Warning, contentDescription = null, tint = premiumRed, modifier = Modifier.size(56.dp)); Spacer(modifier = Modifier.height(12.dp))
@@ -100,8 +149,9 @@ fun ChannelsScreen(categoryName: String, categoryId: String, accountManager: Acc
                     Button(onClick = { loadChannels(true) }, shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumAccent, contentColor = premiumBg)) { Text("Retry", fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif) }
                 }
             }
-        } else if (filteredChannels.isEmpty()) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No channels found", color = premiumTextSec, fontSize = 15.sp, fontWeight = FontWeight.Medium) } }
-        else {
+        } else if (filteredChannels.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No channels found", color = premiumTextSec, fontSize = 15.sp, fontWeight = FontWeight.Medium) }
+        } else {
             LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
                 items(filteredChannels, key = { it.stream_id }) { channel ->
                     Card(onClick = { onPlayChannel(channel) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = premiumSurface), elevation = CardDefaults.cardElevation(0.dp)) {

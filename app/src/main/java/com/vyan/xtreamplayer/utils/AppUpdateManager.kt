@@ -43,6 +43,7 @@ data class GithubReleaseInfo(
 )
 
 object AppUpdateManager {
+    // FIXED: Added 'suspend' keyword here
     suspend fun checkGithubForUpdate(currentVersion: String): GithubReleaseInfo? = withContext(Dispatchers.IO) {
         try {
             val url = URL("https://vyan.dbprojects.workers.dev/release/latest")
@@ -162,10 +163,10 @@ fun AppUpdateDialog(
                     cursor?.close()
                     delay(100)
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     isDownloadingUpdate = false
-                    Toast.makeText(context, "Error starting download.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Error: ${e.localizedMessage ?: "Unknown error"}", Toast.LENGTH_LONG).show()
                 }
             }
         }
