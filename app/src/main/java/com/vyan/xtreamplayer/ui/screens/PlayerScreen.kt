@@ -12,7 +12,6 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
-import android.util.Base64
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -71,22 +70,8 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.vyan.xtreamplayer.data.managers.SettingsManager
+import com.vyan.xtreamplayer.utils.StreamFormatNormalizer
 import kotlinx.coroutines.delay
-
-@SuppressLint("UnsafeOptInUsageError")
-fun buildClearKeyJwk(keyIdHex: String, keyHex: String): String? {
-    fun hexToBase64Url(hex: String): String? {
-        val clean = hex.replace("-", "").trim()
-        if (clean.length % 2 != 0 || clean.length < 16) return null
-        val bytes = clean.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-    }
-    return try {
-        val kId = hexToBase64Url(keyIdHex) ?: return null
-        val k = hexToBase64Url(keyHex) ?: return null
-        """{"keys":[{"kty":"oct","k":"$k","kid":"$kId"}],"type":"temporary"}"""
-    } catch (e: Exception) { null }
-}
 
 data class PickerSourceItem(
     val title: String,
@@ -179,7 +164,6 @@ fun PlayerScreen(
     var lastPositionChangeAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var bufferingSince by remember { mutableStateOf<Long?>(null) }
 
-    // Auto-detect Live vs VOD
     var isLiveWindow by remember { mutableStateOf(isLiveStream) }
 
     BackHandler {
@@ -205,100 +189,53 @@ fun PlayerScreen(
         try {
             val activeUa = currentUa.ifBlank { "OTT Navigator" }
 
+            // 1. Pass raw stream data to the Brain (Normalizer)
+            val streamConfig = StreamFormatNormalizer.normalize(
+                url = currentUrl,
+                keyId = currentKeyId,
+                key = currentKey,
+                cookie = currentCookie,
+                baseHeaders = currentHeaders
+            )
+
+            // 2. Configure ExoPlayer with the perfectly formatted proxy data
             val httpDataSourceFactory = DefaultHttpDataSource.Factory()
                 .setUserAgent(activeUa)
                 .setAllowCrossProtocolRedirects(true)
                 .setKeepPostFor302Redirects(true)
                 .setConnectTimeoutMs(15000)
                 .setReadTimeoutMs(15000)
+                .setDefaultRequestProperties(streamConfig.headers)
 
-            val reqProperties = mutableMapOf<String, String>()
-            reqProperties["Accept"] = "*/*"
-            reqProperties["Connection"] = "keep-alive"
-
-            if (currentCookie.isNotBlank()) {
-                reqProperties["Cookie"] = currentCookie
-            }
-            reqProperties.putAll(currentHeaders)
-
-            if (currentUrl.contains("|")) {
-                val headerPart = currentUrl.substringAfter("|")
-                headerPart.split("&").forEach { pair ->
-                    val kv = pair.split("=", limit = 2)
-                    if (kv.size == 2) {
-                        reqProperties[kv[0].trim()] = kv[1].trim()
-                    }
-                }
-            }
-
-            val cleanUrl = currentUrl.substringBefore("|").trim()
-            val lowerUrl = cleanUrl.lowercase()
-
-            when {
-                lowerUrl.contains("slivcdn.com") || lowerUrl.contains("sonyliv") -> {
-                    if (!reqProperties.containsKey("Origin")) reqProperties["Origin"] = "https://www.sonyliv.com/"
-                    if (!reqProperties.containsKey("Referer")) reqProperties["Referer"] = "https://www.sonyliv.com/"
-                }
-                lowerUrl.contains("jiotv") || lowerUrl.contains("jio.com") -> {
-                    if (!reqProperties.containsKey("Origin")) reqProperties["Origin"] = "https://www.jiotv.com/"
-                    if (!reqProperties.containsKey("Referer")) reqProperties["Referer"] = "https://www.jiotv.com/"
-                }
-                lowerUrl.contains("tataplay") || lowerUrl.contains("watch.tataplay.com") -> {
-                    if (!reqProperties.containsKey("Origin")) reqProperties["Origin"] = "https://watch.tataplay.com/"
-                    if (!reqProperties.containsKey("Referer")) reqProperties["Referer"] = "https://watch.tataplay.com/"
-                }
-                lowerUrl.contains("hotstar") -> {
-                    if (!reqProperties.containsKey("Origin")) reqProperties["Origin"] = "https://www.hotstar.com/"
-                    if (!reqProperties.containsKey("Referer")) reqProperties["Referer"] = "https://www.hotstar.com/"
-                }
-            }
-
-            httpDataSourceFactory.setDefaultRequestProperties(reqProperties)
             val mediaSourceFactory = DefaultMediaSourceFactory(context).setDataSourceFactory(httpDataSourceFactory)
+            val mediaItemBuilder = MediaItem.Builder()
+                .setUri(Uri.parse(streamConfig.proxyStreamUrl))
+                .setMimeType(streamConfig.mimeType)
 
-            val isExtremeSource = if (unifiedSources.isNotEmpty()) {
-                unifiedSources[currentSourceIndex].sourceType == "EXTREME"
-            } else {
-                lowerUrl.contains("sonyliv") || lowerUrl.contains("slivcdn") || lowerUrl.contains("jiotv") ||
-                        lowerUrl.contains("tataplay") || lowerUrl.contains("hotstar") || currentUrl.contains("|")
-            }
-
-            val finalPlaybackUrl = if (isExtremeSource) {
-                com.vyan.xtreamplayer.utils.LocalStreamProxy.createProxyUrl(cleanUrl, reqProperties)
-            } else {
-                cleanUrl
-            }
-
-            val mediaItemBuilder = MediaItem.Builder().setUri(Uri.parse(finalPlaybackUrl))
-
-            if (lowerUrl.contains(".mpd")) {
-                mediaItemBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_MPD)
-            } else if (lowerUrl.contains(".m3u8") || isExtremeSource) {
-                mediaItemBuilder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
-            }
-
-            if (currentKeyId.isNotBlank() && currentKeyId.startsWith("http", ignoreCase = true)) {
-                mediaItemBuilder.setDrmConfiguration(
-                    MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
-                        .setLicenseUri(currentKeyId)
-                        .setLicenseRequestHeaders(reqProperties.toMap())
-                        .build()
-                )
-            } else if (currentKeyId.length >= 16 && currentKey.length >= 16) {
-                val jwkJson = buildClearKeyJwk(currentKeyId, currentKey)
-                if (jwkJson != null) {
+            // 3. Configure DRM (also seamlessly handled by proxy)
+            if (streamConfig.drmScheme != null) {
+                if (streamConfig.proxyDrmLicenseUrl != null) {
+                    mediaItemBuilder.setDrmConfiguration(
+                        MediaItem.DrmConfiguration.Builder(streamConfig.drmScheme)
+                            .setLicenseUri(streamConfig.proxyDrmLicenseUrl)
+                            .setLicenseRequestHeaders(streamConfig.headers)
+                            .build()
+                    )
+                } else if (streamConfig.localJwk != null) {
                     val drmSessionManager = DefaultDrmSessionManager.Builder()
-                        .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
-                        .build(LocalMediaDrmCallback(jwkJson.toByteArray()))
+                        .setUuidAndExoMediaDrmProvider(streamConfig.drmScheme, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                        .build(LocalMediaDrmCallback(streamConfig.localJwk.toByteArray()))
                     mediaSourceFactory.setDrmSessionManagerProvider { drmSessionManager }
-                    mediaItemBuilder.setDrmConfiguration(MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID).build())
+                    mediaItemBuilder.setDrmConfiguration(MediaItem.DrmConfiguration.Builder(streamConfig.drmScheme).build())
                 }
             }
 
+            // 4. Play
             val mediaSource = mediaSourceFactory.createMediaSource(mediaItemBuilder.build())
             exoPlayer?.setMediaSource(mediaSource)
             exoPlayer?.prepare()
             exoPlayer?.playWhenReady = true
+
         } catch (e: Exception) {
             isLoading = false; isError = true; errorMessage = e.message ?: "Failed to initialize player"
         }
@@ -723,8 +660,6 @@ fun PlayerScreen(
         )
     }
 
-    // THE FIX: Adding unifiedSources.size and sources.size to the remember keys.
-    // This tells Jetpack Compose to instantly rebuild the popup list whenever a new source is found in the background.
     val pickerItems = remember(sources.size, unifiedSources.size, currentSourceIndex, currentUrl) {
         if (unifiedSources.isNotEmpty()) {
             unifiedSources.mapIndexed { index, source ->
