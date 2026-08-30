@@ -10,6 +10,8 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -71,7 +73,9 @@ object LocalStreamProxy {
             return
         }
 
-        val isDirectPassthrough = pathSegments.size == 1 && pathSegments[0] in setOf("manifest.mpd", "playlist.m3u8", "seg.ts", "segment")
+        val isDirectPassthrough = pathSegments.size == 1 && pathSegments[0] in setOf(
+            "manifest.mpd", "playlist.m3u8", "seg.ts", "segment", "video.mp4", "video.ts"
+        )
         val targetUrl = if (isDirectPassthrough) {
             targetBaseUrl
         } else {
@@ -87,14 +91,39 @@ object LocalStreamProxy {
     }
 
     private suspend fun handleDrmRequest(call: ApplicationCall, targetKeyUrl: String, headers: Map<String, String>, lane: String) = withContext(Dispatchers.IO) {
+        if (targetKeyUrl.contains(":") && !targetKeyUrl.startsWith("http", true)) {
+            try {
+                val parts = targetKeyUrl.split(":")
+                if (parts.size == 2) {
+                    val activeKid = parts[0].trim()
+                    val activeK = parts[1].trim()
+                    if (activeKid.length >= 16 && activeK.length >= 16) {
+                        val jwk = JSONObject().apply {
+                            put("keys", JSONArray().put(JSONObject().apply {
+                                put("kty", "oct")
+                                put("k", hexToBase64Url(activeK))
+                                put("kid", hexToBase64Url(activeKid))
+                            }))
+                        }
+                        call.respondText(jwk.toString(), ContentType.Application.Json)
+                        return@withContext
+                    }
+                }
+            } catch (e: Exception) {}
+            call.respond(HttpStatusCode.BadRequest, "Invalid ClearKey HEX format")
+            return@withContext
+        }
+
         val requestBuilder = Request.Builder().url(targetKeyUrl)
-        val ua = headers["User-Agent"] ?: "JioTV.Plus/2.8.4_2076/StreamFlex(StreamFlex;JioSTB) JioTvPlus-AndroidTv"
+        val ua = headers["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
         requestBuilder.header("User-Agent", ua)
         requestBuilder.header("Accept", "*/*")
 
         headers.forEach { (k, v) ->
-            if (!k.equals("host", true) && !k.equals("content-length", true)) {
-                requestBuilder.header(k, v)
+            if (!k.equals("host", true) && !k.equals("content-length", true) && !k.equals("user-agent", true)) {
+                if (lane == "F1" && k.equals("cookie", true)) {} else {
+                    requestBuilder.header(k, v)
+                }
             }
         }
 
@@ -139,7 +168,6 @@ object LocalStreamProxy {
                     put("k", hexToBase64Url(keyHex))
                     put("kid", hexToBase64Url(keyIdHex))
                 }))
-                put("type", "temporary")
             }.toString()
         } catch (e: Exception) { null }
     }
@@ -152,9 +180,30 @@ object LocalStreamProxy {
     }
 
     private suspend fun executeStreamRequest(call: ApplicationCall, targetUrl: String, headers: Map<String, String>, b64Headers: String, lane: String) = withContext(Dispatchers.IO) {
-        val requestBuilder = Request.Builder().url(targetUrl)
+        val okHttpUrl = try {
+            if (targetUrl.contains("?")) {
+                val base = targetUrl.substringBefore("?")
+                val query = targetUrl.substringAfter("?")
+                val builder = base.toHttpUrl().newBuilder()
+                query.split("&").forEach { param ->
+                    val parts = param.split("=", limit = 2)
+                    if (parts.size == 2) {
+                        builder.addQueryParameter(parts[0], parts[1])
+                    } else if (parts.size == 1) {
+                        builder.addQueryParameter(parts[0], "")
+                    }
+                }
+                builder.build()
+            } else {
+                targetUrl.toHttpUrl()
+            }
+        } catch (_: Exception) {
+            targetUrl.toHttpUrlOrNull() ?: targetUrl.toHttpUrl()
+        }
 
-        val ua = headers["User-Agent"] ?: "JioTV.Plus/2.8.4_2076/StreamFlex(StreamFlex;JioSTB) JioTvPlus-AndroidTv"
+        val requestBuilder = Request.Builder().url(okHttpUrl)
+
+        val ua = headers["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         requestBuilder.header("User-Agent", ua)
         requestBuilder.header("Accept", "*/*")
         requestBuilder.header("Connection", "keep-alive")
@@ -182,16 +231,17 @@ object LocalStreamProxy {
                 return@withContext
             }
 
+            val effectiveUrl = response.request.url.toString()
             val contentType = response.header("Content-Type", "")?.lowercase() ?: ""
+
             if (targetUrl.contains(".m3u8", true) || contentType.contains("mpegurl")) {
                 val body = response.body?.string() ?: ""
                 response.close()
-                call.respondText(rewriteM3u8(body, targetUrl, b64Headers, lane), ContentType.parse("application/vnd.apple.mpegurl"))
+                call.respondText(rewriteM3u8(body, effectiveUrl, b64Headers, lane), ContentType.parse("application/vnd.apple.mpegurl"))
             } else if (targetUrl.contains(".mpd", true) || contentType.contains("dash+xml")) {
                 val body = response.body?.string() ?: ""
                 response.close()
-                // Safely rewrite MPD absolute BaseURLs without corrupting DASH Template chunks
-                call.respondText(rewriteMpd(body, targetUrl, b64Headers, lane), ContentType.parse("application/dash+xml"))
+                call.respondText(rewriteMpd(body, effectiveUrl, b64Headers, lane), ContentType.parse("application/dash+xml"))
             } else {
                 val mime = if (contentType.isNotBlank()) contentType else if (targetUrl.contains(".ts", true)) "video/mp2t" else "video/mp4"
                 call.respondOutputStream(ContentType.parse(mime), HttpStatusCode.fromValue(response.code)) {
@@ -213,21 +263,28 @@ object LocalStreamProxy {
                 else -> {
                     val abs = resolveWithQueryInheritance(baseUrl, trim)
                     val b64 = Base64.encodeToString(abs.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-                    "http://127.0.0.1:$PORT/proxy/$lane/$b64/$b64Headers/seg.ts"
+                    val ext = if (abs.lowercase().contains(".m3u8")) "playlist.m3u8" else "seg.ts"
+                    "http://127.0.0.1:$PORT/proxy/$lane/$b64/$b64Headers/$ext"
                 }
             }
         }
     }
 
     private fun rewriteMpd(manifest: String, baseUrl: String, b64Headers: String, lane: String): String {
-        // FIX: We only replace explicit absolute BaseURLs.
-        // We do NOT modify media="..." attributes, preserving ExoPlayer $Time$ templates perfectly.
         val regex = Regex("""<BaseURL>(http[s]?://[^<]+)</BaseURL>""")
-        return manifest.replace(regex) { match ->
+        var updated = manifest.replace(regex) { match ->
             val abs = resolveWithQueryInheritance(baseUrl, match.groupValues[1])
             val b64 = Base64.encodeToString(abs.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
             "<BaseURL>http://127.0.0.1:$PORT/proxy/$lane/$b64/$b64Headers/</BaseURL>"
         }
+
+        val segRegex = Regex("""media="([^"]+)"""")
+        updated = updated.replace(segRegex) { match ->
+            val abs = resolveWithQueryInheritance(baseUrl, match.groupValues[1])
+            val b64 = Base64.encodeToString(abs.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            "media=\"http://127.0.0.1:$PORT/proxy/$lane/$b64/$b64Headers/segment\""
+        }
+        return updated
     }
 
     private fun resolveWithQueryInheritance(baseUrl: String, relativeUrl: String): String {
@@ -268,14 +325,23 @@ object LocalStreamProxy {
         start()
         val b64Url = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val b64Headers = if (headers.isNotEmpty()) Base64.encodeToString(JSONObject(headers).toString().toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING) else "EMPTY"
-        val ext = if (url.lowercase().contains(".mpd")) "manifest.mpd" else "playlist.m3u8"
+
+        val lower = url.lowercase()
+        val ext = when {
+            lower.contains(".mpd") -> "manifest.mpd"
+            lower.contains(".mp4") -> "video.mp4"
+            lower.contains(".ts") -> "video.ts"
+            else -> "playlist.m3u8"
+        }
         return "http://127.0.0.1:$PORT/proxy/$lane/$b64Url/$b64Headers/$ext"
     }
 
-    fun createProxyLicenseUrl(keyUrl: String, headers: Map<String, String> = emptyMap(), lane: String = "GEN"): String {
+    fun createProxyUrlForLicense(keyUrl: String, headers: Map<String, String> = emptyMap(), lane: String = "GEN"): String {
         start()
         val b64Url = Base64.encodeToString(keyUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val b64Headers = if (headers.isNotEmpty()) Base64.encodeToString(JSONObject(headers).toString().toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING) else "EMPTY"
         return "http://127.0.0.1:$PORT/proxy/$lane/$b64Url/$b64Headers/license"
     }
+
+    fun createProxyLicenseUrl(keyUrl: String, headers: Map<String, String> = emptyMap(), lane: String = "GEN"): String = createProxyUrlForLicense(keyUrl, headers, lane)
 }
