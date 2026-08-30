@@ -7,6 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStream
 import java.io.InputStreamReader
@@ -14,38 +16,64 @@ import java.util.concurrent.TimeUnit
 
 object M3uParser {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .build()
+    private val client = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
 
-    // FIXED: Restored the original parse method so LiveTVScreen doesn't crash!
-    // It now uses byteInputStream() to safely stream the string without OOM errors.
     fun parse(content: String): List<M3uChannel> {
-        if (content.isBlank()) {
-            throw IllegalArgumentException("Playlist is empty")
-        }
+        if (content.isBlank()) throw IllegalArgumentException("Playlist is empty")
+        val trimmed = content.trim()
+        if (trimmed.startsWith("[") || trimmed.startsWith("{")) return parseFormat3Json(trimmed)
         return parseStream(content.byteInputStream(Charsets.UTF_8))
     }
 
-    // SAFELY parse a local file line-by-line without running out of RAM
-    suspend fun parseLocalFile(context: Context, uri: Uri): List<M3uChannel> =
-        withContext(Dispatchers.IO) {
-            val resolver = context.contentResolver
-            resolver.openInputStream(uri)?.use { stream ->
-                parseStream(stream)
-            } ?: emptyList()
-        }
+    suspend fun parseLocalFile(context: Context, uri: Uri): List<M3uChannel> = withContext(Dispatchers.IO) {
+        context.contentResolver.openInputStream(uri)?.use { parseStream(it) } ?: emptyList()
+    }
 
-    // SAFELY download and parse a network file line-by-line
     suspend fun parseNetworkUrl(url: String): List<M3uChannel> = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(url).build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@withContext emptyList()
-            response.body?.byteStream()?.use { stream ->
-                parseStream(stream)
-            } ?: emptyList()
+            response.body?.byteStream()?.use { parseStream(it) } ?: emptyList()
         }
+    }
+
+    private fun parseFormat3Json(content: String): List<M3uChannel> {
+        val out = mutableListOf<M3uChannel>()
+        val wrapped = if (content.startsWith("[")) content else "[$content]"
+        val jsonArray = try { JSONArray(Regex(""",\s*]\s*$""").replace(wrapped, "]")) } catch (e: Exception) { return emptyList() }
+
+        for (i in 0 until jsonArray.length()) {
+            val obj = jsonArray.optJSONObject(i) ?: continue
+            val url = obj.optString("url", "")
+            if (!url.startsWith("http", true)) continue
+
+            // Parse keyId/key or extract from "clearkey" field
+            val ck = obj.optString("clearkey", "")
+            var kId = obj.optString("keyId", "")
+            var k = obj.optString("key", "")
+            if (kId.isBlank() && ck.contains(":")) {
+                val p = ck.split(":")
+                kId = p[0].trim()
+                k = p[1].trim()
+            }
+
+            out.add(
+                M3uChannel(
+                    name = obj.optString("name", "Unknown").ifBlank { "Unknown" },
+                    url = url,
+                    logo = obj.optString("logo", ""),
+                    group = obj.optString("category", ""),
+                    tvgId = obj.optString("id", ""),
+                    tvgName = obj.optString("name", ""),
+                    userAgent = "",
+                    cookie = obj.optString("cookie", ""),
+                    keyId = kId,
+                    key = k,
+                    format = PlaylistFormat.FORMAT_3_JSON_CLEARKEY
+                )
+            )
+        }
+        return out
     }
 
     private fun parseStream(inputStream: InputStream): List<M3uChannel> {
@@ -56,16 +84,10 @@ object M3uParser {
         var pendingGroup = ""
         var pendingTvgId = ""
         var pendingTvgName = ""
+        var pendingLicenseKey = ""
+        var pendingUserAgent = ""
+        var pendingCookie = ""
 
-        fun resetPending() {
-            pendingName = null
-            pendingLogo = ""
-            pendingGroup = ""
-            pendingTvgId = ""
-            pendingTvgName = ""
-        }
-
-        // useLines streams the text efficiently, preventing OutOfMemory crashes
         BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8)).useLines { lines ->
             for (raw in lines) {
                 val line = raw.trim()
@@ -81,22 +103,25 @@ object M3uParser {
                     pendingTvgName = attrs["tvg-name"] ?: ""
                     pendingLogo = attrs["tvg-logo"] ?: ""
                     pendingGroup = attrs["group-title"] ?: ""
-
                     pendingName = if (namePart.isNotEmpty()) namePart else if (pendingTvgName.isNotEmpty()) pendingTvgName else "Unknown"
                     continue
                 }
 
-                if (line.startsWith("#EXTGRP:")) {
-                    pendingGroup = line.substring("#EXTGRP:".length).trim()
+                if (line.startsWith("#EXTGRP:")) { pendingGroup = line.substring("#EXTGRP:".length).trim(); continue }
+                if (line.startsWith("#KODIPROP:inputstream.adaptive.license_key=")) { pendingLicenseKey = line.substringAfter("=").trim(); continue }
+                if (line.startsWith("#EXTVLCOPT:http-user-agent=")) { pendingUserAgent = line.substringAfter("=").trim(); continue }
+                if (line.startsWith("#EXTHTTP:")) {
+                    try {
+                        val json = JSONObject(line.substringAfter("#EXTHTTP:").trim())
+                        if (json.has("cookie")) pendingCookie = json.getString("cookie")
+                    } catch (e: Exception) {}
                     continue
                 }
 
-                // Unknown directive (e.g. #EXTVLCOPT) — ignore it
                 if (line.startsWith("#")) continue
 
-                // Plain URL line
                 val url = line
-                if (!looksLikeUrl(url)) continue
+                if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) continue
 
                 out.add(
                     M3uChannel(
@@ -105,51 +130,33 @@ object M3uParser {
                         logo = pendingLogo,
                         group = pendingGroup,
                         tvgId = pendingTvgId,
-                        tvgName = pendingTvgName
+                        tvgName = pendingTvgName,
+                        userAgent = pendingUserAgent,
+                        cookie = pendingCookie,
+                        keyId = pendingLicenseKey,
+                        format = PlaylistFormat.UNKNOWN
                     )
                 )
-                resetPending()
+                pendingName = null
+                pendingLogo = ""; pendingGroup = ""; pendingTvgId = ""; pendingTvgName = ""
+                pendingLicenseKey = ""; pendingUserAgent = ""; pendingCookie = ""
             }
         }
-
-        if (out.isEmpty()) {
-            throw IllegalArgumentException("No channels found — is this a valid M3U playlist?")
-        }
+        if (out.isEmpty()) throw IllegalArgumentException("No channels found.")
         return out
-    }
-
-    private fun looksLikeUrl(s: String): Boolean {
-        val lower = s.lowercase()
-        return lower.startsWith("http://") ||
-                lower.startsWith("https://") ||
-                lower.startsWith("rtmp://") ||
-                lower.startsWith("rtmps://") ||
-                lower.startsWith("rtsp://") ||
-                lower.startsWith("udp://") ||
-                lower.startsWith("rtp://") ||
-                lower.startsWith("mms://") ||
-                lower.startsWith("mmsh://")
     }
 
     private fun parseAttrs(input: String): Map<String, String> {
         val result = mutableMapOf<String, String>()
         var s = input.trim()
-
         if (s.startsWith(":")) s = s.substring(1).trim()
-
-        // Drop the leading numeric duration
         val durMatch = Regex("^-?\\d+(\\.\\d+)?").find(s)
-        if (durMatch != null) {
-            s = s.substring(durMatch.range.last + 1).trim()
-        }
+        if (durMatch != null) s = s.substring(durMatch.range.last + 1).trim()
 
-        // Matches key="value" | key='value' | key=value
         val re = Regex("""([a-zA-Z0-9_\-]+)=("([^"]*)"|'([^']*)'|([^\s,]+))""")
         re.findAll(s).forEach { match ->
             val key = match.groupValues[1].lowercase()
-            val value = match.groupValues[3].ifEmpty {
-                match.groupValues[4].ifEmpty { match.groupValues[5] }
-            }
+            val value = match.groupValues[3].ifEmpty { match.groupValues[4].ifEmpty { match.groupValues[5] } }
             result[key] = value
         }
         return result

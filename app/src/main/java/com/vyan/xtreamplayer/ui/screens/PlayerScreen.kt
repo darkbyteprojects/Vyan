@@ -70,6 +70,7 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.vyan.xtreamplayer.data.managers.SettingsManager
+import com.vyan.xtreamplayer.utils.PlaylistFormat
 import com.vyan.xtreamplayer.utils.StreamFormatNormalizer
 import kotlinx.coroutines.delay
 
@@ -120,6 +121,13 @@ fun PlayerScreen(
     cookie: String = "",
     keyId: String = "",
     key: String = "",
+    // Which playlist format this channel came from (Format 1 / 2 / 3 / Unknown).
+    // Drives which dedicated StreamFormatNormalizer path is used. Defaults to
+    // UNKNOWN, which is safe: it routes to the same generic behavior this
+    // screen always had. If your source-switch logic (AggregatedChannel /
+    // UnifiedSource) starts carrying a `format` field too, thread it into
+    // `currentFormat` in the failover blocks below the same way keyId/key are.
+    format: PlaylistFormat = PlaylistFormat.UNKNOWN,
     headers: Map<String, String> = emptyMap(),
     settingsManager: SettingsManager? = null,
     onBack: () -> Unit
@@ -139,6 +147,10 @@ fun PlayerScreen(
     var currentCookie by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].cookie else cookie) }
     var currentKeyId by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].keyId else keyId) }
     var currentKey by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].key else key) }
+    // NOTE: UnifiedSource doesn't carry a `format` field yet, so source
+    // failover (below) can't update this per-source. It stays pinned to the
+    // format of the channel PlayerScreen was opened with.
+    var currentFormat by remember { mutableStateOf(format) }
     var currentHeaders by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].headers else headers) }
 
     var isError by remember { mutableStateOf(false) }
@@ -180,25 +192,27 @@ fun PlayerScreen(
     val trackSelector = remember { if (isPreview) null else DefaultTrackSelector(context) }
     val exoPlayer = remember { if (isPreview) null else ExoPlayer.Builder(context).setTrackSelector(trackSelector!!).build() }
 
-    LaunchedEffect(currentUrl, currentUa, currentCookie, currentKeyId, currentKey, currentHeaders, currentSourceIndex) {
+    LaunchedEffect(currentUrl, currentUa, currentCookie, currentKeyId, currentKey, currentFormat, currentHeaders, currentSourceIndex) {
         if (isPreview) return@LaunchedEffect
         isLoading = true; isError = false; watchdogMessage = null
         openedAt = System.currentTimeMillis(); lastPositionMs = 0L; lastPositionChangeAt = System.currentTimeMillis()
         bufferingSince = null
 
         try {
-            val activeUa = currentUa.ifBlank { "OTT Navigator" }
+            val activeUa = currentUa.ifBlank { "JioTV.Plus/2.8.4_2076/StreamFlex(StreamFlex;JioSTB) JioTvPlus-AndroidTv" }
 
-            // 1. Pass raw stream data to the Brain (Normalizer)
+            val mergedHeaders = currentHeaders.toMutableMap()
+            if (activeUa.isNotBlank()) mergedHeaders["User-Agent"] = activeUa
+
             val streamConfig = StreamFormatNormalizer.normalize(
                 url = currentUrl,
                 keyId = currentKeyId,
                 key = currentKey,
                 cookie = currentCookie,
-                baseHeaders = currentHeaders
+                userAgent = activeUa,
+                baseHeaders = mergedHeaders
             )
 
-            // 2. Configure ExoPlayer with the perfectly formatted proxy data
             val httpDataSourceFactory = DefaultHttpDataSource.Factory()
                 .setUserAgent(activeUa)
                 .setAllowCrossProtocolRedirects(true)
@@ -212,25 +226,31 @@ fun PlayerScreen(
                 .setUri(Uri.parse(streamConfig.proxyStreamUrl))
                 .setMimeType(streamConfig.mimeType)
 
-            // 3. Configure DRM (also seamlessly handled by proxy)
             if (streamConfig.drmScheme != null) {
-                if (streamConfig.proxyDrmLicenseUrl != null) {
+                if (streamConfig.localJwk != null) {
+                    // Format 3 (JSON ClearKey): the key/keyId pair is already
+                    // known locally — no license server round trip needed.
+                    // Wire a LocalMediaDrmCallback carrying the JWK directly
+                    // instead of pointing ExoPlayer at a license URI.
+                    val jwkBytes = streamConfig.localJwk.toByteArray(Charsets.UTF_8)
+                    val clearKeyDrmManager = DefaultDrmSessionManager.Builder()
+                        .setUuidAndExoMediaDrmProvider(streamConfig.drmScheme, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                        .build(LocalMediaDrmCallback(jwkBytes))
+                    mediaSourceFactory.setDrmSessionManagerProvider { clearKeyDrmManager }
+                    mediaItemBuilder.setDrmConfiguration(
+                        MediaItem.DrmConfiguration.Builder(streamConfig.drmScheme).build()
+                    )
+                } else if (streamConfig.proxyDrmLicenseUrl != null) {
+                    val activeDrmHeaders = streamConfig.drmHeaders ?: streamConfig.headers
                     mediaItemBuilder.setDrmConfiguration(
                         MediaItem.DrmConfiguration.Builder(streamConfig.drmScheme)
                             .setLicenseUri(streamConfig.proxyDrmLicenseUrl)
-                            .setLicenseRequestHeaders(streamConfig.headers)
+                            .setLicenseRequestHeaders(activeDrmHeaders)
                             .build()
                     )
-                } else if (streamConfig.localJwk != null) {
-                    val drmSessionManager = DefaultDrmSessionManager.Builder()
-                        .setUuidAndExoMediaDrmProvider(streamConfig.drmScheme, FrameworkMediaDrm.DEFAULT_PROVIDER)
-                        .build(LocalMediaDrmCallback(streamConfig.localJwk.toByteArray()))
-                    mediaSourceFactory.setDrmSessionManagerProvider { drmSessionManager }
-                    mediaItemBuilder.setDrmConfiguration(MediaItem.DrmConfiguration.Builder(streamConfig.drmScheme).build())
                 }
             }
 
-            // 4. Play
             val mediaSource = mediaSourceFactory.createMediaSource(mediaItemBuilder.build())
             exoPlayer?.setMediaSource(mediaSource)
             exoPlayer?.prepare()

@@ -3,161 +3,185 @@ package com.vyan.xtreamplayer.utils
 import android.net.Uri
 import android.util.Base64
 import androidx.media3.common.C
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
 
-/**
- * Holds the perfectly formatted, proxy-routed stream data ready for ExoPlayer.
- */
 data class NormalizedStream(
     val proxyStreamUrl: String,
     val mimeType: String,
     val headers: Map<String, String>,
     val drmScheme: UUID?,
     val proxyDrmLicenseUrl: String?,
+    val drmHeaders: Map<String, String>?,
     val localJwk: String?
 )
 
 object StreamFormatNormalizer {
 
+    private const val JIO_STB_UA = "JioTV.Plus/2.8.4_2076/StreamFlex(StreamFlex;JioSTB) JioTvPlus-AndroidTv"
+
     fun normalize(
-        url: String,
-        keyId: String,
-        key: String,
-        cookie: String,
-        baseHeaders: Map<String, String>
+        url: String, keyId: String, key: String, cookie: String, userAgent: String, baseHeaders: Map<String, String>
     ): NormalizedStream {
-        val reqProperties = mutableMapOf<String, String>()
-        reqProperties["Accept"] = "*/*"
-        reqProperties["Connection"] = "keep-alive"
-
-        if (cookie.isNotBlank()) reqProperties["Cookie"] = cookie
-        reqProperties.putAll(baseHeaders)
-
-        // ---------------------------------------------------------
-        // RULE 1: Pipe Header Extraction (e.g., URL|Header=Value)
-        // ---------------------------------------------------------
-        var cleanUrl = url
-        if (cleanUrl.contains("|")) {
-            val headerPart = cleanUrl.substringAfter("|")
-            headerPart.split("&").forEach { pair ->
-                val kv = pair.split("=", limit = 2)
-                if (kv.size == 2) reqProperties[kv[0].trim()] = kv[1].trim()
-            }
-            cleanUrl = cleanUrl.substringBefore("|").trim()
+        val format = detectFormat(url, keyId, cookie)
+        return when (format) {
+            PlaylistFormat.FORMAT_1_M3U_PIPE -> normalizeFormat1(url, keyId, cookie, userAgent, baseHeaders)
+            PlaylistFormat.FORMAT_2_M3U_QUERY -> normalizeFormat2(url, keyId, cookie, userAgent, baseHeaders)
+            PlaylistFormat.FORMAT_3_JSON_CLEARKEY -> normalizeFormat3(url, keyId, key, cookie, userAgent, baseHeaders)
+            PlaylistFormat.UNKNOWN -> normalizeGeneric(url, keyId, key, cookie, userAgent, baseHeaders)
         }
+    }
+
+    private fun detectFormat(url: String, keyId: String, cookie: String): PlaylistFormat {
+        return when {
+            url.contains("|Cookie=", true) || url.contains("|cookie=", true) || url.contains("&xxx=") || keyId.contains("streamflexsmm.in", true) -> PlaylistFormat.FORMAT_1_M3U_PIPE
+            keyId.contains(".php", true) || keyId.contains("keyid=", true) || keyId.contains("allinonereborn2.online", true) -> PlaylistFormat.FORMAT_2_M3U_QUERY
+            cookie.contains("__hdnea__") && !url.contains("__hdnea__") -> PlaylistFormat.FORMAT_3_JSON_CLEARKEY
+            else -> PlaylistFormat.UNKNOWN
+        }
+    }
+
+    private fun sanitizeUa(ua: String): String = if (ua.isBlank() || ua.startsWith("@")) JIO_STB_UA else ua
+
+    // =========================================================================================
+    // LANE 1: FORMAT 1 (StreamFlex / Jio Pipe)
+    // =========================================================================================
+    private fun normalizeFormat1(url: String, keyId: String, cookie: String, userAgent: String, baseHeaders: Map<String, String>): NormalizedStream {
+        val streamHeaders = mutableMapOf<String, String>()
+        val drmHeaders = mutableMapOf<String, String>()
+
+        val activeUa = sanitizeUa(userAgent)
+        streamHeaders["User-Agent"] = activeUa
+        drmHeaders["User-Agent"] = activeUa
+        streamHeaders["Accept"] = "*/*"
+        streamHeaders["Connection"] = "keep-alive"
+
+        var cleanUrl = url.substringBefore("|").trim()
+        var extractedCookie = cookie
+
+        // Safely extract pipe attributes without overwriting EXTHTTP cookie
+        if (url.contains("|")) {
+            url.substringAfter("|").split("&").forEach { pair ->
+                val kv = pair.split("=", limit = 2)
+                if (kv.size == 2) {
+                    val k = kv[0].trim().lowercase()
+                    val v = Uri.decode(kv[1].trim())
+                    if (k == "cookie" && extractedCookie.isBlank()) extractedCookie = v
+                    else streamHeaders[kv[0].trim()] = v
+                }
+            }
+        }
+
+        if (extractedCookie.isNotBlank()) streamHeaders["Cookie"] = extractedCookie
+        streamHeaders.putAll(baseHeaders)
+        drmHeaders.putAll(baseHeaders)
 
         while (cleanUrl.endsWith("?") || cleanUrl.endsWith("&")) {
             cleanUrl = cleanUrl.substring(0, cleanUrl.length - 1)
         }
 
-        // ---------------------------------------------------------
-        // RULE 2: Akamai / CDN Token Injection (Query String fixes)
-        // ---------------------------------------------------------
-        if (cookie.contains("__hdnea__") && !cleanUrl.contains("__hdnea__")) {
-            val token = cookie.split(";").firstOrNull { it.contains("__hdnea__") }?.trim()
-            if (token != null) cleanUrl += (if (cleanUrl.contains("?")) "&" else "?") + token
-        }
-        if (cookie.contains("hdnts") && !cleanUrl.contains("hdnts")) {
-            val token = cookie.split(";").firstOrNull { it.contains("hdnts") }?.trim()
-            if (token != null) cleanUrl += (if (cleanUrl.contains("?")) "&" else "?") + token
-        }
-
-        // ---------------------------------------------------------
-        // RULE 3: Domain-Specific Origin/Referer Spoofing
-        // ---------------------------------------------------------
-        val lowerUrl = cleanUrl.lowercase()
-        when {
-            lowerUrl.contains("slivcdn.com") || lowerUrl.contains("sonyliv") -> {
-                reqProperties.putIfAbsent("Origin", "https://www.sonyliv.com/")
-                reqProperties.putIfAbsent("Referer", "https://www.sonyliv.com/")
-            }
-            lowerUrl.contains("jiotv") || lowerUrl.contains("jio.com") -> {
-                reqProperties.putIfAbsent("Origin", "https://www.jiotv.com/")
-                reqProperties.putIfAbsent("Referer", "https://www.jiotv.com/")
-            }
-            lowerUrl.contains("tataplay") || lowerUrl.contains("watch.tataplay.com") -> {
-                reqProperties.putIfAbsent("Origin", "https://watch.tataplay.com/")
-                reqProperties.putIfAbsent("Referer", "https://watch.tataplay.com/")
-            }
-            lowerUrl.contains("hotstar") -> {
-                reqProperties.putIfAbsent("Origin", "https://www.hotstar.com/")
-                reqProperties.putIfAbsent("Referer", "https://www.hotstar.com/")
-            }
-            else -> {
-                try {
-                    val uri = Uri.parse(cleanUrl)
-                    uri.host?.let {
-                        reqProperties.putIfAbsent("Origin", "https://$it/")
-                        reqProperties.putIfAbsent("Referer", "https://$it/")
-                    }
-                } catch (e: Exception) {}
-            }
-        }
-
-        // ---------------------------------------------------------
-        // RULE 4: DRM Key Format Normalization
-        // ---------------------------------------------------------
-        var activeKeyId = keyId.trim()
-        var activeKey = key.trim()
-        if (activeKey.contains(":") && activeKeyId.isBlank()) {
-            val parts = activeKey.split(":")
-            if (parts.size == 2) {
-                activeKeyId = parts[0].trim()
-                activeKey = parts[1].trim()
-            }
-        }
-
-        val isWidevine = activeKeyId.contains("widevine", ignoreCase = true) || activeKey.contains("widevine", ignoreCase = true)
-        val drmScheme = if (isWidevine) C.WIDEVINE_UUID else C.CLEARKEY_UUID
-
-        var proxyDrmLicenseUrl: String? = null
-        var localJwk: String? = null
-
-        // STRICT PROXY RULE FOR DRM
-        if (activeKeyId.isNotBlank() && activeKeyId.startsWith("http", ignoreCase = true)) {
-            proxyDrmLicenseUrl = LocalStreamProxy.createProxyLicenseUrl(activeKeyId, reqProperties)
-        } else if (activeKeyId.length >= 16 && activeKey.length >= 16) {
-            localJwk = buildClearKeyJwk(activeKeyId, activeKey)
-        }
-
-        // ---------------------------------------------------------
-        // RULE 5: Strict Proxy Routing for the Video Stream
-        // ---------------------------------------------------------
-        val mimeType = if (lowerUrl.contains(".mpd")) {
-            androidx.media3.common.MimeTypes.APPLICATION_MPD
-        } else {
-            androidx.media3.common.MimeTypes.APPLICATION_M3U8
-        }
-
-        val isLocalFile = cleanUrl.startsWith("file://", ignoreCase = true) || cleanUrl.startsWith("content://", ignoreCase = true)
-
-        val proxyStreamUrl = if (!isLocalFile) {
-            LocalStreamProxy.createProxyUrl(cleanUrl, reqProperties)
-        } else {
-            cleanUrl
-        }
+        val proxyDrmUrl = if (keyId.isNotBlank() && keyId.startsWith("http", true)) LocalStreamProxy.createProxyLicenseUrl(keyId.trim(), drmHeaders, "F1") else null
+        val proxyStreamUrl = LocalStreamProxy.createProxyUrl(cleanUrl, streamHeaders, "F1")
 
         return NormalizedStream(
             proxyStreamUrl = proxyStreamUrl,
-            mimeType = mimeType,
-            headers = reqProperties,
-            drmScheme = if (proxyDrmLicenseUrl != null || localJwk != null) drmScheme else null,
-            proxyDrmLicenseUrl = proxyDrmLicenseUrl,
+            mimeType = if (cleanUrl.lowercase().contains(".mpd")) androidx.media3.common.MimeTypes.APPLICATION_MPD else androidx.media3.common.MimeTypes.APPLICATION_M3U8,
+            headers = streamHeaders,
+            drmScheme = if (proxyDrmUrl != null) C.CLEARKEY_UUID else null,
+            proxyDrmLicenseUrl = proxyDrmUrl,
+            drmHeaders = drmHeaders,
+            localJwk = null
+        )
+    }
+
+    // =========================================================================================
+    // LANE 2: FORMAT 2 (Allinone PHP Fetcher)
+    // =========================================================================================
+    private fun normalizeFormat2(url: String, keyId: String, cookie: String, userAgent: String, baseHeaders: Map<String, String>): NormalizedStream {
+        val streamHeaders = mutableMapOf<String, String>()
+        val activeUa = sanitizeUa(userAgent)
+        streamHeaders["User-Agent"] = activeUa
+        if (cookie.isNotBlank()) streamHeaders["Cookie"] = cookie
+        streamHeaders.putAll(baseHeaders)
+
+        val proxyDrmUrl = if (keyId.isNotBlank() && keyId.startsWith("http", true)) LocalStreamProxy.createProxyLicenseUrl(keyId.trim(), streamHeaders, "F2") else null
+        val proxyStreamUrl = LocalStreamProxy.createProxyUrl(url.trim(), streamHeaders, "F2")
+
+        return NormalizedStream(
+            proxyStreamUrl = proxyStreamUrl,
+            mimeType = if (url.lowercase().contains(".mpd")) androidx.media3.common.MimeTypes.APPLICATION_MPD else androidx.media3.common.MimeTypes.APPLICATION_M3U8,
+            headers = streamHeaders,
+            drmScheme = if (proxyDrmUrl != null) C.CLEARKEY_UUID else null,
+            proxyDrmLicenseUrl = proxyDrmUrl,
+            drmHeaders = streamHeaders,
+            localJwk = null
+        )
+    }
+
+    // =========================================================================================
+    // LANE 3: FORMAT 3 (JSON Catchup with Local Hex Key)
+    // =========================================================================================
+    private fun normalizeFormat3(url: String, keyId: String, key: String, cookie: String, userAgent: String, baseHeaders: Map<String, String>): NormalizedStream {
+        val streamHeaders = mutableMapOf<String, String>()
+        streamHeaders["User-Agent"] = sanitizeUa(userAgent)
+        if (cookie.isNotBlank()) streamHeaders["Cookie"] = cookie
+        streamHeaders.putAll(baseHeaders)
+
+        var activeKid = keyId.trim()
+        var activeK = key.trim()
+        if (activeKid.contains(":") && activeK.isBlank()) { val p = activeKid.split(":"); activeKid = p[0]; activeK = p[1] }
+        else if (activeK.contains(":") && activeKid.isBlank()) { val p = activeK.split(":"); activeKid = p[0]; activeK = p[1] }
+
+        var localJwk: String? = null
+        if (activeKid.length >= 16 && activeK.length >= 16) {
+            localJwk = try {
+                val jwk = JSONObject().apply {
+                    put("keys", JSONArray().put(JSONObject().apply {
+                        put("kty", "oct")
+                        put("k", Base64.encodeToString(hexToBytes(activeK), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+                        put("kid", Base64.encodeToString(hexToBytes(activeKid), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+                    }))
+                    put("type", "temporary")
+                }
+                jwk.toString()
+            } catch (e: Exception) { null }
+        }
+
+        return NormalizedStream(
+            proxyStreamUrl = LocalStreamProxy.createProxyUrl(url.trim(), streamHeaders, "F3"),
+            mimeType = if (url.lowercase().contains(".mpd")) androidx.media3.common.MimeTypes.APPLICATION_MPD else androidx.media3.common.MimeTypes.APPLICATION_M3U8,
+            headers = streamHeaders,
+            drmScheme = if (localJwk != null) C.CLEARKEY_UUID else null,
+            proxyDrmLicenseUrl = null,
+            drmHeaders = null,
             localJwk = localJwk
         )
     }
 
-    private fun buildClearKeyJwk(keyIdHex: String, keyHex: String): String? {
-        fun hexToBase64Url(hex: String): String? {
-            val clean = hex.replace("-", "").trim()
-            if (clean.length % 2 != 0 || clean.length < 16) return null
-            val bytes = clean.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-            return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-        }
-        return try {
-            val kId = hexToBase64Url(keyIdHex) ?: return null
-            val k = hexToBase64Url(keyHex) ?: return null
-            """{"keys":[{"kty":"oct","k":"$k","kid":"$kId"}],"type":"temporary"}"""
-        } catch (e: Exception) { null }
+    private fun normalizeGeneric(url: String, keyId: String, key: String, cookie: String, userAgent: String, baseHeaders: Map<String, String>): NormalizedStream {
+        val streamHeaders = mutableMapOf<String, String>()
+        streamHeaders["User-Agent"] = sanitizeUa(userAgent)
+        if (cookie.isNotBlank()) streamHeaders["Cookie"] = cookie
+        streamHeaders.putAll(baseHeaders)
+
+        val proxyDrmUrl = if (keyId.isNotBlank() && keyId.startsWith("http", true)) LocalStreamProxy.createProxyLicenseUrl(keyId.trim(), streamHeaders, "GEN") else null
+
+        return NormalizedStream(
+            proxyStreamUrl = LocalStreamProxy.createProxyUrl(url.trim(), streamHeaders, "GEN"),
+            mimeType = if (url.lowercase().contains(".mpd")) androidx.media3.common.MimeTypes.APPLICATION_MPD else androidx.media3.common.MimeTypes.APPLICATION_M3U8,
+            headers = streamHeaders,
+            drmScheme = if (proxyDrmUrl != null) C.CLEARKEY_UUID else null,
+            proxyDrmLicenseUrl = proxyDrmUrl,
+            drmHeaders = streamHeaders,
+            localJwk = null
+        )
+    }
+
+    private fun hexToBytes(hex: String): ByteArray {
+        val clean = hex.trim()
+        val bytes = ByteArray(clean.length / 2)
+        for (i in bytes.indices) bytes[i] = ((Character.digit(clean[i * 2], 16) shl 4) + Character.digit(clean[i * 2 + 1], 16)).toByte()
+        return bytes
     }
 }
