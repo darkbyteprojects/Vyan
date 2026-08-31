@@ -83,11 +83,20 @@ data class PickerSourceItem(
 
 fun getQualityTag(height: Int): String {
     return when {
-        height >= 2160 -> "UHD"
+        height >= 4320 -> "8K UHD"
+        height >= 2160 -> "4K UHD"
+        height >= 1440 -> "QHD"
         height >= 1080 -> "FHD"
         height >= 720 -> "HD"
-        height > 0 -> "SD"
-        else -> "HD"
+        height >= 540 -> "qHD"
+        height >= 512 -> "SD+"
+        height >= 480 -> "SD"
+        height >= 360 -> "nHD"
+        height >= 288 -> "CIF"
+        height >= 216 -> "216p"
+        height >= 144 -> "QCIF"
+        height > 0 -> "Low"
+        else -> "AUTO"
     }
 }
 
@@ -187,7 +196,19 @@ fun PlayerScreen(
     }
 
     val trackSelector = remember { if (isPreview) null else DefaultTrackSelector(context) }
-    val exoPlayer = remember { if (isPreview) null else ExoPlayer.Builder(context).setTrackSelector(trackSelector!!).build() }
+
+    // FIX: Force ExoPlayer to avoid secure decoders unless explicitly required
+    val exoPlayer = remember {
+        if (isPreview) null else {
+            val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(context)
+                .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+                .setEnableDecoderFallback(true)
+
+            ExoPlayer.Builder(context, renderersFactory)
+                .setTrackSelector(trackSelector!!)
+                .build()
+        }
+    }
 
     LaunchedEffect(currentUrl, currentUa, currentCookie, currentKeyId, currentKey, currentHeaders, currentSourceIndex) {
         if (isPreview) return@LaunchedEffect

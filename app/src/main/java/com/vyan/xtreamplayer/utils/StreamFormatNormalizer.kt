@@ -38,10 +38,8 @@ object StreamFormatNormalizer {
         var extractedUa = userAgent
         var extractedCookie = cookie
 
-        // 1. Apply Base Headers First
         streamHeaders.putAll(baseHeaders)
 
-        // 2. Extract Pipe (|) Headers Appended by M3U Providers Globally
         val pipePart = if (url.contains("?|")) url.substringAfter("?|") else if (url.contains("|")) url.substringAfter("|") else ""
         if (pipePart.isNotBlank()) {
             pipePart.split("&").forEach { pair ->
@@ -61,9 +59,7 @@ object StreamFormatNormalizer {
             }
         }
 
-        // 3. Enforce Correct User-Agent and Spoofing (Applied LAST so it cannot be overwritten)
-        val resolvedUa = sanitizeUa(extractedUa, cleanUrl)
-        streamHeaders["User-Agent"] = resolvedUa
+        streamHeaders["User-Agent"] = sanitizeUa(extractedUa, cleanUrl)
         streamHeaders["Accept"] = "*/*"
         streamHeaders["Connection"] = "keep-alive"
 
@@ -75,7 +71,6 @@ object StreamFormatNormalizer {
 
         val drmHeaders = mutableMapOf<String, String>().apply { putAll(streamHeaders) }
 
-        // 4. Inject CDN Auth Tokens into URL Queries
         if (extractedCookie.isNotBlank()) {
             val hdneaToken = extractedCookie.split(";").firstOrNull { it.contains("__hdnea__") }?.trim()
             if (hdneaToken != null && !cleanUrl.contains("__hdnea__")) {
@@ -89,7 +84,6 @@ object StreamFormatNormalizer {
             }
         }
 
-        // 5. Universal DRM Parser
         var activeKid = keyId.trim()
         var activeK = key.trim()
 
@@ -109,19 +103,26 @@ object StreamFormatNormalizer {
 
         if (activeKid.isNotBlank() && activeK.isNotBlank() && !activeKid.startsWith("http", true)) {
             drmScheme = C.CLEARKEY_UUID
-            if (activeKid.length >= 16 && activeK.length >= 16) {
-                localJwk = try {
-                    JSONObject().apply {
-                        put("keys", JSONArray().put(JSONObject().apply {
-                            put("kty", "oct")
-                            put("k", Base64.encodeToString(hexToBytes(activeK), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-                            put("kid", Base64.encodeToString(hexToBytes(activeKid), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-                        }))
-                    }.toString()
-                } catch (e: Exception) { null }
-            }
-            if (localJwk == null) {
-                proxyDrmUrl = LocalStreamProxy.createProxyLicenseUrl("$activeKid:$activeK", drmHeaders, "UNI")
+            localJwk = try {
+                val kidBytes = hexToBytes(activeKid)
+                val keyBytes = hexToBytes(activeK)
+
+                // Strict Base64URL encoding without padding
+                val kidB64 = Base64.encodeToString(kidBytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+                val keyB64 = Base64.encodeToString(keyBytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+
+                // Constructing the exact JSON structure expected by ExoPlayer ClearKey
+                val jwkObject = JSONObject().apply {
+                    put("kty", "oct")
+                    put("kid", kidB64)
+                    put("k", keyB64)
+                }
+
+                JSONObject().apply {
+                    put("keys", JSONArray().put(jwkObject))
+                }.toString()
+            } catch (e: Exception) {
+                null
             }
         } else if (activeKid.isNotBlank() && activeKid.startsWith("http", true)) {
             proxyDrmUrl = LocalStreamProxy.createProxyLicenseUrl(activeKid, drmHeaders, "UNI")
@@ -131,8 +132,8 @@ object StreamFormatNormalizer {
             drmScheme = C.CLEARKEY_UUID
         }
 
-        // 6. Build Final Proxied Stream URL
-        val finalStreamUrl = if (cleanUrl.contains(".mpd", true)) {
+        // Bypass local proxy for MPD and ClearKey streams to prevent chunk modification
+        val finalStreamUrl = if (cleanUrl.contains(".mpd", true) || localJwk != null) {
             cleanUrl
         } else {
             LocalStreamProxy.createProxyUrl(cleanUrl, streamHeaders, "UNI")
@@ -170,14 +171,18 @@ object StreamFormatNormalizer {
             return if (lowerUrl.contains("_mob")) JIO_MOBILE_UA else JIO_STB_UA
         }
 
-        if (lowerUrl.contains("hotstar") || lowerUrl.contains("sonyliv") || lowerUrl.contains("fancode")) {
+        // FIX: Honor the playlist's provided user-agent for Hotstar/SonyLiv instead of forcing desktop browser UA
+        if (ua.isNotBlank() && !lowerUa.contains("sayan10") && !lowerUa.contains("ott navigator")) {
+            return ua
+        }
+
+        if (lowerUrl.contains("sonyliv") || lowerUrl.contains("fancode")) {
             return GENERIC_BROWSER_UA
         }
 
         if (ua.isBlank() || lowerUa.contains("sayan10") || lowerUa.contains("ott navigator")) return IPTV_DEFAULT_UA
         return ua
     }
-
     private fun applyDomainSpoofing(url: String, headers: MutableMap<String, String>) {
         val lowerUrl = url.lowercase()
         if (lowerUrl.contains("jio")) {
@@ -204,7 +209,9 @@ object StreamFormatNormalizer {
     private fun hexToBytes(hex: String): ByteArray {
         val clean = hex.trim()
         val bytes = ByteArray(clean.length / 2)
-        for (i in bytes.indices) bytes[i] = ((Character.digit(clean[i * 2], 16) shl 4) + Character.digit(clean[i * 2 + 1], 16)).toByte()
+        for (i in bytes.indices) {
+            bytes[i] = ((Character.digit(clean[i * 2], 16) shl 4) + Character.digit(clean[i * 2 + 1], 16)).toByte()
+        }
         return bytes
     }
 }

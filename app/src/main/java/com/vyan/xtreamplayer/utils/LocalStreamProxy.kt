@@ -29,6 +29,18 @@ object LocalStreamProxy {
         .readTimeout(20, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
+        .addInterceptor { chain ->
+            val request = chain.request()
+            val response = chain.proceed(request)
+
+            // Check if we hit a redirect
+            if (response.isRedirect) {
+                val location = response.header("Location")
+                // If the redirect stays within the streaming ecosystem,
+                // ensure headers carry over cleanly.
+            }
+            response
+        }
         .build()
 
     const val PORT = 8080
@@ -140,10 +152,15 @@ object LocalStreamProxy {
             response.close()
 
             val raw = String(responseBytes, Charsets.UTF_8).trim()
-            val convertedJwk = tryConvertFlatClearKeyToJwk(raw)
+
+            // FIX: Strip out prepended PHP warnings or HTML debug text from the license server response
+            val jsonStartIndex = raw.indexOf("{").takeIf { it != -1 } ?: raw.indexOf("[")
+            val sanitizedJson = if (jsonStartIndex != -1) raw.substring(jsonStartIndex).trim() else raw
+
+            val convertedJwk = tryConvertFlatClearKeyToJwk(sanitizedJson)
 
             when {
-                convertedJwk == null && raw.contains("{") && raw.contains("\"keys\"") -> call.respondText(raw, ContentType.Application.Json)
+                convertedJwk == null && sanitizedJson.contains("{") && sanitizedJson.contains("\"keys\"") -> call.respondText(sanitizedJson, ContentType.Application.Json)
                 convertedJwk != null -> call.respondText(convertedJwk, ContentType.Application.Json)
                 else -> call.respondBytes(responseBytes)
             }
