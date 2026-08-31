@@ -10,7 +10,6 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
@@ -57,7 +56,7 @@ object LocalStreamProxy {
     }
 
     private suspend fun handleProxy(call: ApplicationCall) {
-        val lane = call.parameters["lane"] ?: "GEN"
+        val lane = call.parameters["lane"] ?: "UNI"
         val b64Url = call.parameters["b64Url"] ?: return call.respond(HttpStatusCode.BadRequest, "Missing URL")
         val b64Headers = call.parameters["b64Headers"] ?: "EMPTY"
         val pathSegments = call.parameters.getAll("path") ?: emptyList()
@@ -74,8 +73,9 @@ object LocalStreamProxy {
         }
 
         val isDirectPassthrough = pathSegments.size == 1 && pathSegments[0] in setOf(
-            "manifest.mpd", "playlist.m3u8", "seg.ts", "segment", "video.mp4", "video.ts"
+            "manifest.mpd", "playlist.m3u8", "seg.ts", "segment", "video.mp4", "video.ts", "key.bin", "track.m3u8"
         )
+
         val targetUrl = if (isDirectPassthrough) {
             targetBaseUrl
         } else {
@@ -93,7 +93,7 @@ object LocalStreamProxy {
     private suspend fun handleDrmRequest(call: ApplicationCall, targetKeyUrl: String, headers: Map<String, String>, lane: String) = withContext(Dispatchers.IO) {
         if (targetKeyUrl.contains(":") && !targetKeyUrl.startsWith("http", true)) {
             try {
-                val parts = targetKeyUrl.split(":")
+                val parts = targetKeyUrl.split(":", limit = 2)
                 if (parts.size == 2) {
                     val activeKid = parts[0].trim()
                     val activeK = parts[1].trim()
@@ -109,21 +109,20 @@ object LocalStreamProxy {
                         return@withContext
                     }
                 }
-            } catch (e: Exception) {}
+            } catch (_: Exception) {}
             call.respond(HttpStatusCode.BadRequest, "Invalid ClearKey HEX format")
             return@withContext
         }
 
         val requestBuilder = Request.Builder().url(targetKeyUrl)
-        val ua = headers["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+        val ua = headers["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         requestBuilder.header("User-Agent", ua)
         requestBuilder.header("Accept", "*/*")
 
         headers.forEach { (k, v) ->
-            if (!k.equals("host", true) && !k.equals("content-length", true) && !k.equals("user-agent", true)) {
-                if (lane == "F1" && k.equals("cookie", true)) {} else {
-                    requestBuilder.header(k, v)
-                }
+            val lk = k.lowercase()
+            if (lk != "host" && lk != "content-length" && lk != "user-agent") {
+                requestBuilder.header(k, v)
             }
         }
 
@@ -180,25 +179,14 @@ object LocalStreamProxy {
     }
 
     private suspend fun executeStreamRequest(call: ApplicationCall, targetUrl: String, headers: Map<String, String>, b64Headers: String, lane: String) = withContext(Dispatchers.IO) {
-        val okHttpUrl = try {
-            if (targetUrl.contains("?")) {
-                val base = targetUrl.substringBefore("?")
-                val query = targetUrl.substringAfter("?")
-                val builder = base.toHttpUrl().newBuilder()
-                query.split("&").forEach { param ->
-                    val parts = param.split("=", limit = 2)
-                    if (parts.size == 2) {
-                        builder.addQueryParameter(parts[0], parts[1])
-                    } else if (parts.size == 1) {
-                        builder.addQueryParameter(parts[0], "")
-                    }
-                }
-                builder.build()
-            } else {
-                targetUrl.toHttpUrl()
-            }
-        } catch (_: Exception) {
-            targetUrl.toHttpUrlOrNull() ?: targetUrl.toHttpUrl()
+        // FIX: Added aggressive fallback parsing for malformed IPTV URLs containing spaces or illegal characters
+        val okHttpUrl = targetUrl.toHttpUrlOrNull() ?: try {
+            URI(targetUrl).toASCIIString().toHttpUrlOrNull()
+        } catch (e: Exception) { null }
+
+        if (okHttpUrl == null) {
+            call.respond(HttpStatusCode.BadRequest, "Malformed Proxy URL")
+            return@withContext
         }
 
         val requestBuilder = Request.Builder().url(okHttpUrl)
@@ -226,7 +214,7 @@ object LocalStreamProxy {
         try {
             val response = client.newCall(requestBuilder.build()).execute()
             if (!response.isSuccessful) {
-                call.respond(HttpStatusCode.fromValue(response.code), "CDN Rejected Request (${response.code})")
+                call.respond(HttpStatusCode.fromValue(response.code), "CDN Rejected Request (${response.code}) - ${response.message}")
                 response.close()
                 return@withContext
             }
@@ -259,7 +247,25 @@ object LocalStreamProxy {
             val trim = line.trim()
             when {
                 trim.isEmpty() -> ""
-                trim.startsWith("#") -> line
+                // FIX: Look inside #EXT tags to rewrite nested URIs for Audio, Subtitles, and AES-128 Encryption Keys
+                trim.startsWith("#") -> {
+                    if (trim.contains("URI=\"")) {
+                        trim.replace(Regex("""URI="([^"]+)"""")) { match ->
+                            val originalUri = match.groupValues[1]
+                            val abs = resolveWithQueryInheritance(baseUrl, originalUri)
+                            val b64 = Base64.encodeToString(abs.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+
+                            val ext = when {
+                                abs.lowercase().contains(".m3u8") -> "track.m3u8"
+                                abs.lowercase().contains(".key") || trim.contains("EXT-X-KEY") -> "key.bin"
+                                else -> "seg.ts"
+                            }
+                            "URI=\"http://127.0.0.1:$PORT/proxy/$lane/$b64/$b64Headers/$ext\""
+                        }
+                    } else {
+                        line
+                    }
+                }
                 else -> {
                     val abs = resolveWithQueryInheritance(baseUrl, trim)
                     val b64 = Base64.encodeToString(abs.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
@@ -271,18 +277,18 @@ object LocalStreamProxy {
     }
 
     private fun rewriteMpd(manifest: String, baseUrl: String, b64Headers: String, lane: String): String {
+        var updated = manifest
         val regex = Regex("""<BaseURL>(http[s]?://[^<]+)</BaseURL>""")
-        var updated = manifest.replace(regex) { match ->
+        updated = updated.replace(regex) { match ->
             val abs = resolveWithQueryInheritance(baseUrl, match.groupValues[1])
             val b64 = Base64.encodeToString(abs.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
             "<BaseURL>http://127.0.0.1:$PORT/proxy/$lane/$b64/$b64Headers/</BaseURL>"
         }
 
-        val segRegex = Regex("""media="([^"]+)"""")
-        updated = updated.replace(segRegex) { match ->
-            val abs = resolveWithQueryInheritance(baseUrl, match.groupValues[1])
-            val b64 = Base64.encodeToString(abs.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-            "media=\"http://127.0.0.1:$PORT/proxy/$lane/$b64/$b64Headers/segment\""
+        if (!updated.contains("<BaseURL>")) {
+            val b64Base = Base64.encodeToString(baseUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            val proxyBase = "http://127.0.0.1:$PORT/proxy/$lane/$b64Base/$b64Headers/"
+            updated = updated.replaceFirst(Regex("""<Period([^>]*)>"""), "<Period$1>\n<BaseURL>$proxyBase</BaseURL>")
         }
         return updated
     }
@@ -321,7 +327,7 @@ object LocalStreamProxy {
         } catch (_: Exception) { emptyMap() }
     }
 
-    fun createProxyUrl(url: String, headers: Map<String, String> = emptyMap(), lane: String = "GEN"): String {
+    fun createProxyUrl(url: String, headers: Map<String, String> = emptyMap(), lane: String = "UNI"): String {
         start()
         val b64Url = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val b64Headers = if (headers.isNotEmpty()) Base64.encodeToString(JSONObject(headers).toString().toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING) else "EMPTY"
@@ -336,12 +342,10 @@ object LocalStreamProxy {
         return "http://127.0.0.1:$PORT/proxy/$lane/$b64Url/$b64Headers/$ext"
     }
 
-    fun createProxyUrlForLicense(keyUrl: String, headers: Map<String, String> = emptyMap(), lane: String = "GEN"): String {
+    fun createProxyLicenseUrl(keyUrl: String, headers: Map<String, String> = emptyMap(), lane: String = "UNI"): String {
         start()
         val b64Url = Base64.encodeToString(keyUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val b64Headers = if (headers.isNotEmpty()) Base64.encodeToString(JSONObject(headers).toString().toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING) else "EMPTY"
         return "http://127.0.0.1:$PORT/proxy/$lane/$b64Url/$b64Headers/license"
     }
-
-    fun createProxyLicenseUrl(keyUrl: String, headers: Map<String, String> = emptyMap(), lane: String = "GEN"): String = createProxyUrlForLicense(keyUrl, headers, lane)
 }

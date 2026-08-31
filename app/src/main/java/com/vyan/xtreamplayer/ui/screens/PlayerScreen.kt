@@ -70,7 +70,6 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.vyan.xtreamplayer.data.managers.SettingsManager
-import com.vyan.xtreamplayer.utils.PlaylistFormat
 import com.vyan.xtreamplayer.utils.StreamFormatNormalizer
 import kotlinx.coroutines.delay
 
@@ -127,7 +126,6 @@ fun PlayerScreen(
     // screen always had. If your source-switch logic (AggregatedChannel /
     // UnifiedSource) starts carrying a `format` field too, thread it into
     // `currentFormat` in the failover blocks below the same way keyId/key are.
-    format: PlaylistFormat = PlaylistFormat.UNKNOWN,
     headers: Map<String, String> = emptyMap(),
     settingsManager: SettingsManager? = null,
     onBack: () -> Unit
@@ -150,7 +148,6 @@ fun PlayerScreen(
     // NOTE: UnifiedSource doesn't carry a `format` field yet, so source
     // failover (below) can't update this per-source. It stays pinned to the
     // format of the channel PlayerScreen was opened with.
-    var currentFormat by remember { mutableStateOf(format) }
     var currentHeaders by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].headers else headers) }
 
     var isError by remember { mutableStateOf(false) }
@@ -192,29 +189,27 @@ fun PlayerScreen(
     val trackSelector = remember { if (isPreview) null else DefaultTrackSelector(context) }
     val exoPlayer = remember { if (isPreview) null else ExoPlayer.Builder(context).setTrackSelector(trackSelector!!).build() }
 
-    LaunchedEffect(currentUrl, currentUa, currentCookie, currentKeyId, currentKey, currentFormat, currentHeaders, currentSourceIndex) {
+    LaunchedEffect(currentUrl, currentUa, currentCookie, currentKeyId, currentKey, currentHeaders, currentSourceIndex) {
         if (isPreview) return@LaunchedEffect
         isLoading = true; isError = false; watchdogMessage = null
         openedAt = System.currentTimeMillis(); lastPositionMs = 0L; lastPositionChangeAt = System.currentTimeMillis()
         bufferingSince = null
 
         try {
-            val activeUa = currentUa.ifBlank { "JioTV.Plus/2.8.4_2076/StreamFlex(StreamFlex;JioSTB) JioTvPlus-AndroidTv" }
-
-            val mergedHeaders = currentHeaders.toMutableMap()
-            if (activeUa.isNotBlank()) mergedHeaders["User-Agent"] = activeUa
-
+            // Let the normalizer determine the optimal User-Agent based on domain requirements
             val streamConfig = StreamFormatNormalizer.normalize(
                 url = currentUrl,
                 keyId = currentKeyId,
                 key = currentKey,
                 cookie = currentCookie,
-                userAgent = activeUa,
-                baseHeaders = mergedHeaders
+                userAgent = currentUa,
+                baseHeaders = currentHeaders
             )
 
+            val resolvedUa = streamConfig.headers["User-Agent"] ?: "ExoPlayer/2.18.1 (Linux;Android 12) ExoPlayerLib/2.18.1"
+
             val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-                .setUserAgent(activeUa)
+                .setUserAgent(resolvedUa)
                 .setAllowCrossProtocolRedirects(true)
                 .setKeepPostFor302Redirects(true)
                 .setConnectTimeoutMs(15000)
@@ -228,10 +223,6 @@ fun PlayerScreen(
 
             if (streamConfig.drmScheme != null) {
                 if (streamConfig.localJwk != null) {
-                    // Format 3 (JSON ClearKey): the key/keyId pair is already
-                    // known locally — no license server round trip needed.
-                    // Wire a LocalMediaDrmCallback carrying the JWK directly
-                    // instead of pointing ExoPlayer at a license URI.
                     val jwkBytes = streamConfig.localJwk.toByteArray(Charsets.UTF_8)
                     val clearKeyDrmManager = DefaultDrmSessionManager.Builder()
                         .setUuidAndExoMediaDrmProvider(streamConfig.drmScheme, FrameworkMediaDrm.DEFAULT_PROVIDER)

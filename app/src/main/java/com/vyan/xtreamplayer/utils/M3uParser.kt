@@ -18,10 +18,21 @@ object M3uParser {
 
     private val client = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
 
+    // Expanded dictionaries to catch Hotstar / Sports specific keys
+    private val URL_KEYS = listOf("m3u8", "stream_url", "url", "link", "play_url", "src", "file", "video_url", "source")
+    private val NAME_KEYS = listOf("title", "name", "match_name", "channel_name", "stream_display_name", "ch_name")
+    private val LOGO_KEYS = listOf("logo", "icon", "poster_image", "stream_icon", "tvg-logo", "pic", "image")
+    private val GROUP_KEYS = listOf("genre", "category", "stage", "group-title", "category_name", "group")
+    private val ID_KEYS = listOf("id", "tvg-id", "stream_id", "channel_id")
+    private val KEY_ID_KEYS = listOf("key_id", "keyId", "kid", "drm_id")
+    private val KEY_KEYS = listOf("key", "k", "clearkey", "drm_key")
+    private val COOKIE_KEYS = listOf("cookie", "cookies", "http-cookie")
+    private val UA_KEYS = listOf("user_agent", "user-agent", "http-user-agent", "ua")
+
     fun parse(content: String): List<M3uChannel> {
         if (content.isBlank()) throw IllegalArgumentException("Playlist is empty")
         val trimmed = content.trim()
-        if (trimmed.startsWith("[") || trimmed.startsWith("{")) return parseFormat3Json(trimmed)
+        if (trimmed.startsWith("[") || trimmed.startsWith("{")) return parseUniversalJson(trimmed)
         return parseStream(content.byteInputStream(Charsets.UTF_8))
     }
 
@@ -37,73 +48,130 @@ object M3uParser {
         }
     }
 
-    private fun parseFormat3Json(content: String): List<M3uChannel> {
+    private fun parseUniversalJson(content: String): List<M3uChannel> {
         val out = mutableListOf<M3uChannel>()
         try {
+            var jsonNode: Any? = null
             val trimmed = content.trim()
+
             if (trimmed.startsWith("[")) {
                 val wrapped = Regex(""",\s*]\s*$""").replace(trimmed, "]")
-                parseJsonArray(JSONArray(wrapped), out)
+                jsonNode = JSONArray(wrapped)
             } else if (trimmed.startsWith("{")) {
-                val jsonRoot = JSONObject(trimmed)
-                if (jsonRoot.has("channels") && jsonRoot.optJSONArray("channels") != null) {
-                    parseJsonArray(jsonRoot.getJSONArray("channels"), out)
-                } else if (jsonRoot.has("result") && jsonRoot.optJSONArray("result") != null) {
-                    parseJsonArray(jsonRoot.getJSONArray("result"), out)
-                } else {
-                    // Iterates over root keys like "sony-hd", "sab-hd"
-                    val keys = jsonRoot.keys()
-                    while (keys.hasNext()) {
-                        val key = keys.next()
-                        val obj = jsonRoot.optJSONObject(key) ?: continue
-                        parseJsonObject(obj, out)
-                    }
-                }
+                jsonNode = JSONObject(trimmed)
             }
+
+            extractChannelsRecursively(jsonNode, out)
         } catch (_: Exception) {}
         return out
     }
 
-    private fun parseJsonArray(jsonArray: JSONArray, out: MutableList<M3uChannel>) {
-        for (i in 0 until jsonArray.length()) {
-            val obj = jsonArray.optJSONObject(i) ?: continue
-            parseJsonObject(obj, out)
+    // Context-Aware Recursive Crawler
+    private fun extractChannelsRecursively(
+        node: Any?,
+        out: MutableList<M3uChannel>,
+        parentName: String = "",
+        parentLogo: String = "",
+        parentGroup: String = "",
+        nodeKey: String = ""
+    ) {
+        when (node) {
+            is JSONObject -> {
+                // Inherit parent metadata if the child is missing it
+                val currentName = getFirstMatchingString(node, NAME_KEYS).ifBlank { parentName }
+                val currentLogo = getFirstMatchingString(node, LOGO_KEYS).ifBlank { parentLogo }
+                val currentGroup = getFirstMatchingString(node, GROUP_KEYS).ifBlank { parentGroup }
+
+                val url = getFirstMatchingString(node, URL_KEYS)
+
+                if (url.isNotBlank() && (url.startsWith("http", true) || url.endsWith(".m3u8", true) || url.endsWith(".ts", true))) {
+                    // Format names beautifully (e.g., "RCB vs SRH (Hindi)")
+                    val finalName = if (nodeKey.isNotBlank() && currentName == parentName && !currentName.contains(nodeKey, true)) {
+                        "$currentName (${nodeKey.replaceFirstChar { it.uppercase() }})"
+                    } else {
+                        currentName.ifBlank { "Unknown Channel" }
+                    }
+
+                    parseSingleChannelObject(node, url, finalName, currentLogo, currentGroup, out)
+                }
+
+                val keys = node.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val value = node.opt(key)
+                    if (value is JSONObject || value is JSONArray) {
+                        extractChannelsRecursively(value, out, currentName, currentLogo, currentGroup, key)
+                    }
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until node.length()) {
+                    extractChannelsRecursively(node.opt(i), out, parentName, parentLogo, parentGroup, nodeKey)
+                }
+            }
         }
     }
 
-    private fun parseJsonObject(obj: JSONObject, out: MutableList<M3uChannel>) {
-        // FIX: Check "m3u8" first, since your JSON uses "m3u8" as the primary stream key
-        val url = obj.optString("m3u8", obj.optString("url", obj.optString("stream_url", "")))
-        if (!url.startsWith("http", true)) return
-
-        val kId = obj.optString("keyId", obj.optString("key_id", ""))
-        val k = obj.optString("key", "")
-        val cookie = obj.optString("cookie", "")
-        val ck = obj.optString("clearkey", "")
+    private fun parseSingleChannelObject(
+        obj: JSONObject,
+        resolvedUrl: String,
+        finalName: String,
+        finalLogo: String,
+        finalGroup: String,
+        out: MutableList<M3uChannel>
+    ) {
+        val kId = getFirstMatchingString(obj, KEY_ID_KEYS)
+        val k = getFirstMatchingString(obj, KEY_KEYS)
 
         val combinedKeyId = when {
             kId.isNotBlank() && k.isNotBlank() && !kId.contains(":") -> "$kId:$k"
             kId.isNotBlank() -> kId
-            ck.contains(":") -> ck
+            k.contains(":") -> k
             else -> ""
+        }
+
+        // Universal Header Extraction for JSON objects
+        val referer = obj.optString("referer", obj.optString("Referer", ""))
+        val origin = obj.optString("origin", obj.optString("Origin", ""))
+        val ua = getFirstMatchingString(obj, UA_KEYS)
+        val cookie = getFirstMatchingString(obj, COOKIE_KEYS)
+
+        // Inject headers natively into the URL string so Normalizer catches them
+        var finalUrl = resolvedUrl
+        if (!finalUrl.contains("|")) {
+            val pipeParams = mutableListOf<String>()
+            if (ua.isNotBlank()) pipeParams.add("User-Agent=$ua")
+            if (referer.isNotBlank()) pipeParams.add("Referer=$referer")
+            if (origin.isNotBlank()) pipeParams.add("Origin=$origin")
+            if (cookie.isNotBlank()) pipeParams.add("Cookie=$cookie")
+
+            if (pipeParams.isNotEmpty()) {
+                finalUrl = "$finalUrl|${pipeParams.joinToString("&")}"
+            }
         }
 
         out.add(
             M3uChannel(
-                // Map "title" first since your JSON uses "title" for channel names
-                name = obj.optString("title", obj.optString("name", "Unknown")).ifBlank { "Unknown" },
-                url = url,
-                logo = obj.optString("logo", ""),
-                // Map "genre" first since your JSON uses "genre"
-                group = obj.optString("genre", obj.optString("category", obj.optString("group-title", "Sports"))),
-                tvgId = obj.optString("id", ""),
-                tvgName = obj.optString("title", obj.optString("name", "")),
-                userAgent = "",
+                name = finalName,
+                url = finalUrl,
+                logo = finalLogo,
+                group = finalGroup.ifBlank { "Uncategorized" },
+                tvgId = getFirstMatchingString(obj, ID_KEYS),
+                tvgName = finalName,
+                userAgent = ua,
                 cookie = cookie,
                 keyId = combinedKeyId,
                 key = k
             )
         )
+    }
+
+    private fun getFirstMatchingString(obj: JSONObject, possibleKeys: List<String>): String {
+        for (key in possibleKeys) {
+            val value = obj.optString(key, "")
+            if (value.isNotBlank()) return value
+        }
+        return ""
     }
 
     private fun parseStream(inputStream: InputStream): List<M3uChannel> {
@@ -139,47 +207,42 @@ object M3uParser {
                     continue
                 }
 
-                if (line.startsWith("#EXTGRP:")) { pendingGroup = line.substring("#EXTGRP:".length).trim(); continue }
-                if (line.startsWith("#KODIPROP:inputstream.adaptive.license_key=")) { pendingLicenseKey = line.substringAfter("=").trim(); continue }
-                if (line.startsWith("#EXTVLCOPT:http-user-agent=")) { pendingUserAgent = line.substringAfter("=").trim(); continue }
-                if (line.startsWith("#EXTVLCOPT:http-referrer=")) { pendingReferer = line.substringAfter("=").trim(); continue }
-                if (line.startsWith("#EXTVLCOPT:http-cookie=")) { pendingCookie = line.substringAfter("=").trim(); continue }
-
-                if (line.startsWith("#EXTVLCOPT:http-extra-headers=")) {
-                    val extra = line.substringAfter("=").trim()
-                    if (extra.contains(":", true)) {
-                        val parts = extra.split(":", limit = 2)
-                        val hKey = parts[0].trim().lowercase()
-                        val hVal = parts[1].trim()
-                        if (hKey == "origin") pendingOrigin = hVal
-                        if (hKey == "referer") pendingReferer = hVal
-                    }
-                    continue
-                }
-
-                if (line.startsWith("#EXTHTTP:")) {
-                    try {
-                        val json = JSONObject(line.substringAfter("#EXTHTTP:").trim())
-                        json.keys().forEach { k ->
-                            val lk = k.lowercase()
-                            val v = json.getString(k)
-                            when (lk) {
-                                "cookie" -> if (pendingCookie.isBlank()) pendingCookie = v
-                                "origin" -> if (pendingOrigin.isBlank()) pendingOrigin = v
-                                "referer" -> if (pendingReferer.isBlank()) pendingReferer = v
-                                "user-agent" -> if (pendingUserAgent.isBlank()) pendingUserAgent = v
-                            }
+                when {
+                    line.startsWith("#EXTGRP:") -> pendingGroup = line.substring("#EXTGRP:".length).trim()
+                    line.startsWith("#KODIPROP:inputstream.adaptive.license_key=") -> pendingLicenseKey = line.substringAfter("=").trim()
+                    line.startsWith("#EXTVLCOPT:http-user-agent=") -> pendingUserAgent = line.substringAfter("=").trim()
+                    line.startsWith("#EXTVLCOPT:http-referrer=") -> pendingReferer = line.substringAfter("=").trim()
+                    line.startsWith("#EXTVLCOPT:http-cookie=") -> pendingCookie = line.substringAfter("=").trim()
+                    line.startsWith("#EXTVLCOPT:http-origin=") -> pendingOrigin = line.substringAfter("=").trim()
+                    line.startsWith("#EXTVLCOPT:http-extra-headers=") -> {
+                        val extra = line.substringAfter("=").trim()
+                        if (extra.contains(":", true)) {
+                            val parts = extra.split(":", limit = 2)
+                            val hKey = parts[0].trim().lowercase()
+                            val hVal = parts[1].trim()
+                            if (hKey == "origin") pendingOrigin = hVal
+                            if (hKey == "referer") pendingReferer = hVal
                         }
-                    } catch (e: Exception) {}
-                    continue
+                    }
+                    line.startsWith("#EXTHTTP:") -> {
+                        try {
+                            val json = JSONObject(line.substringAfter("#EXTHTTP:").trim())
+                            json.keys().forEach { k ->
+                                val v = json.getString(k)
+                                when (k.lowercase()) {
+                                    "cookie" -> if (pendingCookie.isBlank()) pendingCookie = v
+                                    "origin" -> if (pendingOrigin.isBlank()) pendingOrigin = v
+                                    "referer", "referrer" -> if (pendingReferer.isBlank()) pendingReferer = v
+                                    "user-agent" -> if (pendingUserAgent.isBlank()) pendingUserAgent = v
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
                 }
 
-                if (line.startsWith("#")) continue
+                if (line.startsWith("#") || (!line.startsWith("http://", true) && !line.startsWith("https://", true))) continue
 
-                val url = line
-                if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) continue
-
-                var finalUrl = url
+                var finalUrl = line
                 if (!finalUrl.contains("|")) {
                     val pipeParams = mutableListOf<String>()
                     if (pendingUserAgent.isNotBlank()) pipeParams.add("User-Agent=$pendingUserAgent")
@@ -194,7 +257,7 @@ object M3uParser {
 
                 out.add(
                     M3uChannel(
-                        name = pendingName ?: url,
+                        name = pendingName ?: finalUrl,
                         url = finalUrl,
                         logo = pendingLogo,
                         group = pendingGroup,
@@ -211,7 +274,7 @@ object M3uParser {
                 pendingLicenseKey = ""; pendingUserAgent = ""; pendingCookie = ""; pendingReferer = ""; pendingOrigin = ""
             }
         }
-        if (out.isEmpty()) throw IllegalArgumentException("No channels found.")
+        if (out.isEmpty()) throw IllegalArgumentException("No channels found. Invalid format.")
         return out
     }
 
