@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,73 +38,92 @@ import java.util.TimeZone
 
 enum class EventStatus { LIVE, UPCOMING, ENDED }
 
-fun parseEventTimestamp(dateStr: String, timeStr: String): Long {
+fun parseEventTimestamp(dateTimeStr: String): Long {
     try {
-        if (dateStr.isBlank()) return 0L
-        val cleanDate = dateStr.replace("\\", "").trim()
-        val cleanTime = if (timeStr.isBlank()) "00:00:00" else timeStr.replace("\\", "").trim()
-
+        if (dateTimeStr.isBlank()) return 0L
+        val cleanStr = dateTimeStr.replace("\\", "").trim()
         val formats = listOf(
             SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.US),
-            SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.US),
+            SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.US),
             SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US),
-            SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.US)
+            SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.US)
         )
         for (fmt in formats) {
+            // Force UTC timezone to match the server JSON payload accurately
             fmt.timeZone = TimeZone.getTimeZone("UTC")
-            val parsed = fmt.parse("$cleanDate $cleanTime")
-            if (parsed != null) return parsed.time
+            try {
+                val parsed = fmt.parse(cleanStr)
+                if (parsed != null) return parsed.time
+            } catch (_: Exception) {}
         }
     } catch (_: Exception) {}
     return 0L
 }
 
+fun getFormattedMatchTime(startTimeStr: String): String {
+    val ms = parseEventTimestamp(startTimeStr)
+    if (ms == 0L) return ""
+    // Translate UTC to the user's Local Timezone for card display
+    val fmt = SimpleDateFormat("dd MMM, hh:mm a", Locale.US)
+    fmt.timeZone = TimeZone.getDefault()
+    return fmt.format(ms)
+}
+
 fun getEventStatus(event: LiveSportsEvent, serverTimeOffset: Long): EventStatus {
-    val startTimeMs = parseEventTimestamp(event.startTime.substringBefore(" "), event.startTime.substringAfter(" ", ""))
+    val startTimeMs = parseEventTimestamp(event.startTime)
     if (startTimeMs == 0L) return EventStatus.LIVE
 
+    // Server time offset keeps us strictly synced to the backend's clock
     val now = System.currentTimeMillis() + serverTimeOffset
-    val endTimeMs = if (event.endTime.isNotBlank()) parseEventTimestamp(event.endTime.substringBefore(" "), event.endTime.substringAfter(" ", "")) else startTimeMs + (4 * 3600 * 1000L) // 4 hours window
 
-    // If current time is past start time + 4 hours, mark as ended
-    if (now >= endTimeMs) return EventStatus.ENDED
-    // If current time is before start time, it's upcoming
-    if (now < startTimeMs) return EventStatus.UPCOMING
-    // Otherwise, it is actively running
-    return EventStatus.LIVE
+    val endTimeMs = if (event.endTime.isNotBlank()) {
+        val parsedEnd = parseEventTimestamp(event.endTime)
+        if (parsedEnd > 0L) parsedEnd else startTimeMs + (4 * 3600 * 1000L)
+    } else {
+        startTimeMs + (4 * 3600 * 1000L) // 4 hours window fallback
+    }
+
+    return when {
+        now < startTimeMs -> EventStatus.UPCOMING
+        now in startTimeMs..endTimeMs -> EventStatus.LIVE
+        else -> EventStatus.ENDED
+    }
 }
 
 fun getTimeCountdownOrDate(startTimeStr: String, serverTimeOffset: Long): String {
     if (startTimeStr.isBlank()) return ""
-    val targetTime = parseEventTimestamp(startTimeStr.substringBefore(" "), startTimeStr.substringAfter(" ", ""))
+    val targetTime = parseEventTimestamp(startTimeStr)
     if (targetTime == 0L) return ""
 
     val diffMs = targetTime - (System.currentTimeMillis() + serverTimeOffset)
     if (diffMs > 0) {
         val hours = diffMs / (1000 * 60 * 60)
         val minutes = (diffMs / (1000 * 60)) % 60
-        return if (hours > 24) {
-            val days = hours / 24
-            val dispFormat = SimpleDateFormat("dd/MM/yyyy", Locale.US)
-            dispFormat.format(targetTime)
-        } else if (hours > 0) {
-            "Starts in $hours hour${if (hours > 1) "s" else ""}"
-        } else {
-            "Starts in $minutes min"
+        val days = hours / 24
+
+        return when {
+            days > 0 -> "In $days day${if (days > 1) "s" else ""}"
+            hours > 0 -> "In $hours hr ${minutes}m"
+            else -> "In $minutes min"
         }
     }
-    return "Starts soon"
+    return "Starting Soon"
 }
 
+// Maps exact tournament/category strings from the JSON to universally recognized emojis
 fun getCategoryIcon(category: String): String {
     return when (category.lowercase(Locale.ROOT).trim()) {
-        "boxing", "wwe" -> "🥊"
-        "tennis" -> "🎾"
-        "ice hockey" -> "🏒"
-        "football" -> "⚽"
-        "motorsport", "motorsports" -> "🏎️"
-        "basketball" -> "🏀"
-        "cricket" -> "🏏"
+        "boxing", "wwe", "mixed martial arts", "ufc" -> "🥊"
+        "tennis", "us open", "wimbledon" -> "🎾"
+        "ice hockey", "hockey" -> "🏒"
+        "football", "soccer", "ligue 1", "saudi pro league", "coppa italia", "premier league" -> "⚽"
+        "motorsport", "motorsports", "f1", "motogp" -> "🏎️"
+        "basketball", "nba" -> "🏀"
+        "cricket", "european t20 premier league", "caribbean premier league" -> "🏏"
+        "baseball", "mlb", "triple-a international league" -> "⚾"
+        "rugby" -> "🏉"
+        "golf" -> "⛳"
+        "volleyball" -> "🏐"
         else -> "📺"
     }
 }
@@ -116,7 +136,8 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
     val scope = rememberCoroutineScope()
 
     var refreshTrigger by remember { mutableIntStateOf(0) }
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: All, 1: Live, 2: Upcoming
+    var selectedTab by remember { mutableIntStateOf(0) } // 0: All, 1: Live, 2: Upcoming, 3: Recent
+    var selectedCategory by remember { mutableStateOf("All") } // Icon filter state
 
     var selectedEventForLinks by remember { mutableStateOf<LiveSportsEvent?>(null) }
     var dialogStreamOptions by remember { mutableStateOf<List<StreamOption>>(emptyList()) }
@@ -143,11 +164,24 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
         isLoading = false
     }
 
-    val filteredEvents = remember(events, selectedTab) {
-        when (selectedTab) {
+    // Dynamic list of available categories for the Icon Row
+    val availableCategories = remember(events) {
+        listOf("All") + events.map { it.first.category }.distinct().sorted()
+    }
+
+    // Filter by Time Status AND Selected Sport Icon
+    val filteredEvents = remember(events, selectedTab, selectedCategory) {
+        val byTab = when (selectedTab) {
             1 -> events.filter { it.second == EventStatus.LIVE }
             2 -> events.filter { it.second == EventStatus.UPCOMING }
+            3 -> events.filter { it.second == EventStatus.ENDED }
             else -> events
+        }
+
+        if (selectedCategory == "All") {
+            byTab
+        } else {
+            byTab.filter { it.first.category == selectedCategory }
         }
     }
 
@@ -172,7 +206,8 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF121318))) {
+    // Pure Black UI
+    Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         // Top Header
         Row(
             modifier = Modifier
@@ -195,51 +230,91 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
             }
         }
 
-        Spacer(modifier = Modifier.height(2.dp))
+        // Icon-Only Category Scroll Row
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(availableCategories) { cat ->
+                val isSelected = selectedCategory == cat
+                val iconStr = if (cat == "All") "🌐" else getCategoryIcon(cat)
 
-        // Filter Tabs (All, Live, Upcoming)
-        Row(
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .background(if (isSelected) Color(0xFFE50914) else Color(0xFF141414))
+                        .border(1.dp, if (isSelected) Color(0xFFE50914) else Color.White.copy(alpha = 0.1f), CircleShape)
+                        .clickable { selectedCategory = cat },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(iconStr, fontSize = 20.sp)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Time Filter Tabs (All, Live, Upcoming, Recent)
+        LazyRow(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
+                .padding(horizontal = 16.dp, vertical = 2.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            val liveCount = events.count { it.second == EventStatus.LIVE }
-            val upcomingCount = events.count { it.second == EventStatus.UPCOMING }
+            item {
+                val liveCount = events.count { it.second == EventStatus.LIVE && (selectedCategory == "All" || it.first.category == selectedCategory) }
+                val upcomingCount = events.count { it.second == EventStatus.UPCOMING && (selectedCategory == "All" || it.first.category == selectedCategory) }
+                val recentCount = events.count { it.second == EventStatus.ENDED && (selectedCategory == "All" || it.first.category == selectedCategory) }
 
-            FilterChip(
-                selected = selectedTab == 0,
-                onClick = { selectedTab = 0 },
-                label = { Text("All (${events.size})") },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = Color(0xFFE50914),
-                    selectedLabelColor = Color.White,
-                    containerColor = Color(0xFF1E1E24),
-                    labelColor = Color.LightGray
+                FilterChip(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    label = { Text("All") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color.White,
+                        selectedLabelColor = Color.Black,
+                        containerColor = Color(0xFF141414),
+                        labelColor = Color.LightGray
+                    )
                 )
-            )
-            FilterChip(
-                selected = selectedTab == 1,
-                onClick = { selectedTab = 1 },
-                label = { Text("Live ($liveCount)") },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = Color(0xFFE50914),
-                    selectedLabelColor = Color.White,
-                    containerColor = Color(0xFF1E1E24),
-                    labelColor = Color.LightGray
+                Spacer(modifier = Modifier.width(4.dp))
+                FilterChip(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    label = { Text("Live ($liveCount)") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color.White,
+                        selectedLabelColor = Color.Black,
+                        containerColor = Color(0xFF141414),
+                        labelColor = Color.LightGray
+                    )
                 )
-            )
-            FilterChip(
-                selected = selectedTab == 2,
-                onClick = { selectedTab = 2 },
-                label = { Text("Upcoming ($upcomingCount)") },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = Color(0xFFE50914),
-                    selectedLabelColor = Color.White,
-                    containerColor = Color(0xFF1E1E24),
-                    labelColor = Color.LightGray
+                Spacer(modifier = Modifier.width(4.dp))
+                FilterChip(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    label = { Text("Upcoming ($upcomingCount)") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color.White,
+                        selectedLabelColor = Color.Black,
+                        containerColor = Color(0xFF141414),
+                        labelColor = Color.LightGray
+                    )
                 )
-            )
+                Spacer(modifier = Modifier.width(4.dp))
+                FilterChip(
+                    selected = selectedTab == 3,
+                    onClick = { selectedTab = 3 },
+                    label = { Text("Recent ($recentCount)") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color.White,
+                        selectedLabelColor = Color.Black,
+                        containerColor = Color(0xFF141414),
+                        labelColor = Color.LightGray
+                    )
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(4.dp))
@@ -258,14 +333,17 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 groupedEvents.forEach { (categoryName, categoryEvents) ->
-                    item {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        ) {
-                            Text(getCategoryIcon(categoryName), fontSize = 16.sp)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(categoryName.uppercase(Locale.ROOT), color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    // Hide header if we are already explicitly filtering by a single icon category
+                    if (selectedCategory == "All") {
+                        item {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            ) {
+                                Text(getCategoryIcon(categoryName), fontSize = 16.sp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(categoryName.uppercase(Locale.ROOT), color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
 
@@ -282,7 +360,7 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                 .clip(RoundedCornerShape(12.dp))
                                 .border(1.dp, Color(0xFFFF8A00).copy(alpha = 0.5f), RoundedCornerShape(12.dp))
                                 .clickable { handleEventClick(event, displayTitle) },
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF181920))
+                            colors = CardDefaults.cardColors(containerColor = Color.Black)
                         ) {
                             Column(
                                 modifier = Modifier.padding(14.dp).fillMaxWidth(),
@@ -291,11 +369,22 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                 Text(
                                     text = event.title.uppercase(Locale.ROOT),
                                     color = Color(0xFFE0E0E0),
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+
+                                val matchTimeDisplay = getFormattedMatchTime(event.startTime)
+                                if (matchTimeDisplay.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = matchTimeDisplay,
+                                        color = Color(0xFFAAAAAA),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
 
                                 Spacer(modifier = Modifier.height(10.dp))
 
@@ -304,7 +393,6 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    // Team A Section
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.weight(1f),
@@ -328,7 +416,6 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                         )
                                     }
 
-                                    // Status Indicator
                                     Box(
                                         modifier = Modifier.padding(horizontal = 6.dp),
                                         contentAlignment = Alignment.Center
@@ -357,7 +444,6 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                         }
                                     }
 
-                                    // Team B Section
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.weight(1f),
@@ -393,7 +479,7 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
     if (isResolvingLinks) {
         Dialog(onDismissRequest = { }) {
             Box(
-                modifier = Modifier.size(90.dp).background(Color(0xFF1E1E24), RoundedCornerShape(16.dp)),
+                modifier = Modifier.size(90.dp).background(Color(0xFF141414), RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 CircularProgressIndicator(color = Color(0xFFE50914))
@@ -405,7 +491,7 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
         Dialog(onDismissRequest = { selectedEventForLinks = null }) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
-                color = Color(0xFF1E1E24),
+                color = Color(0xFF141414),
                 modifier = Modifier.fillMaxWidth().padding(16.dp)
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
@@ -428,7 +514,7 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                     }
                                 },
                                 shape = RoundedCornerShape(10.dp),
-                                color = Color(0xFF2D2E38),
+                                color = Color(0xFF222228),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(

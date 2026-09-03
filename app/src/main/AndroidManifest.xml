@@ -22,7 +22,6 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.XtreamPlayer">
 
-
         <activity
             android:name=".MainActivity"
             android:exported="true"

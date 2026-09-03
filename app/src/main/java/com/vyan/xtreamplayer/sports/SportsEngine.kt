@@ -91,31 +91,23 @@ object SportsEngine {
     }
 
     private fun applyConfigData(json: JSONObject) {
-        // 1. Exact fallback chain for the primary API host
         val apiUrl = json.optString("api_url").takeIf { it.isNotBlank() }
             ?: json.optString("api_host").takeIf { it.isNotBlank() }
             ?: json.optString("backup_host").takeIf { it.isNotBlank() }
             ?: json.optString("api").takeIf { it.isNotBlank() }
             ?: json.optString("base_url", "https://cricfytv.net/")
 
-        // 2. Resolve the specific getData base URL
         var base = json.optString("getdata_base_url", apiUrl)
 
-        // 3. Clean trailing slashes and version paths
         base = base.trimEnd('/')
         if (base.endsWith("/v2")) {
             base = base.substringBeforeLast("/v2")
         }
 
         cachedApiHost = base.trimEnd('/')
-
-        // 4. Token fallbacks
-        cachedToken = json.optString("getdata_token",
-            json.optString("get_data_token", SportsCrypto.GETDATA_DEFAULT_TOKEN))
-
+        cachedToken = json.optString("getdata_token", json.optString("get_data_token", SportsCrypto.GETDATA_DEFAULT_TOKEN))
         cachedGetDataPrefix = json.optString("getdata_path_prefix", "v2/")
 
-        // 5. Exact fallback chain for the live events feed path
         cachedLiveEventsSlug = json.optString("events_path").takeIf { it.isNotBlank() }
             ?: json.optString("events_url").takeIf { it.isNotBlank() }
                     ?: json.optString("cric_live_url").takeIf { it.isNotBlank() }
@@ -125,7 +117,6 @@ object SportsEngine {
     private suspend fun fetchData(slugPath: String): String? = withContext(Dispatchers.IO) {
         fetchRemoteConfiguration()
 
-        // Handle absolute content override URLs
         if (slugPath.startsWith("http://", true) || slugPath.startsWith("https://", true)) {
             try {
                 val request = Request.Builder().url(slugPath).header("User-Agent", USER_AGENT_API).build()
@@ -139,7 +130,6 @@ object SportsEngine {
 
         val host = cachedApiHost ?: return@withContext null
 
-        // Replicate `normalizeGetDataPath` from z9.q7.a.java
         var prefix = cachedGetDataPrefix.trimStart('/')
         if (prefix.isNotEmpty() && !prefix.endsWith("/")) prefix += "/"
 
@@ -236,12 +226,21 @@ object SportsEngine {
                     obj.optString("slug", "")
                 }
 
+                // FIXED: Explicitly handle split "date" and "time" fields vs merged "startTime" fields
                 val rawDate = eventObj.optString("date", "").replace("\\/", "/")
                 val rawTime = eventObj.optString("time", "")
                 val combinedStartTime = if (rawDate.isNotBlank() && rawTime.isNotBlank()) {
                     "$rawDate $rawTime"
                 } else {
                     eventObj.optString("startTime", "")
+                }
+
+                val rawEndDate = eventObj.optString("end_date", rawDate).replace("\\/", "/")
+                val rawEndTime = eventObj.optString("end_time", "")
+                val combinedEndTime = if (rawEndDate.isNotBlank() && rawEndTime.isNotBlank()) {
+                    "$rawEndDate $rawEndTime"
+                } else {
+                    eventObj.optString("endTime", "")
                 }
 
                 events.add(
@@ -252,7 +251,7 @@ object SportsEngine {
                         slug = actualSlug,
                         category = finalCategory,
                         startTime = combinedStartTime,
-                        endTime = eventObj.optString("end_time", "").replace("\\/", "/"),
+                        endTime = combinedEndTime,
                         streamOptions = options,
                         isPublished = isVisible,
                         teamA = teamAObj?.optString("name", "") ?: "",
@@ -275,7 +274,6 @@ object SportsEngine {
             val decryptedJson = if (slug.startsWith("[")) {
                 slug
             } else {
-                // Replicate contentOverrideUrl matching for relative paths
                 val formattedSlug = if (slug.startsWith("pro/") || slug.startsWith("channels/")) slug else "channels/${slug.lowercase().trim()}.txt"
                 fetchData(formattedSlug) ?: return@withContext emptyList()
             }

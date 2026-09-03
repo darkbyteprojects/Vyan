@@ -309,14 +309,23 @@ fun PlayerScreen(
 
             val resolvedUa = streamConfig.headers["User-Agent"] ?: "ExoPlayer/2.18.1 (Linux;Android 12) ExoPlayerLib/2.18.1"
 
-            val okHttpDataSourceFactory = OkHttpDataSource.Factory(NetworkClient.defaultClient)
+            // Use DefaultHttpDataSource.Factory instead of OkHttp to natively persist cookies across redirects
+            val defaultHttpDataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
                 .setUserAgent(resolvedUa)
                 .setDefaultRequestProperties(streamConfig.headers)
+                .setAllowCrossProtocolRedirects(true)
 
-            val loadErrorPolicy = DefaultLoadErrorHandlingPolicy(3)
+            val defaultDataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(
+                context,
+                defaultHttpDataSourceFactory
+            )
 
+            // 3. Prevent the player from giving up easily on 400/403 chunk errors
+            val loadErrorPolicy = DefaultLoadErrorHandlingPolicy(5)
+
+            // 4. Build the MediaSource
             val mediaSourceFactory = DefaultMediaSourceFactory(context)
-                .setDataSourceFactory(okHttpDataSourceFactory)
+                .setDataSourceFactory(defaultDataSourceFactory)
                 .setLoadErrorHandlingPolicy(loadErrorPolicy)
 
             val lowerUrl = cleanStreamUrl.lowercase()
@@ -333,6 +342,7 @@ fun PlayerScreen(
                 .setUri(Uri.parse(streamConfig.proxyStreamUrl))
                 .setMimeType(detectedMimeType)
 
+            // 5. Apply DRM configs (if any)
             if (parsedLicenseUrl.isNotBlank()) {
                 mediaItemBuilder.setDrmConfiguration(
                     MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)

@@ -32,7 +32,7 @@ object StreamFormatNormalizer {
         cookie: String,
         userAgent: String,
         baseHeaders: Map<String, String>,
-        bypassProxy: Boolean = false,
+        bypassProxy: Boolean = true, // Default to true to let ExoPlayer handle native redirects
         forceDomainHeaders: Boolean = false
     ): NormalizedStream {
         val streamHeaders = mutableMapOf<String, String>()
@@ -56,14 +56,12 @@ object StreamFormatNormalizer {
                     val k = kv[0].trim().lowercase()
                     val rawV = kv[1].trim()
 
-                    // 1. Sanitize and decode the value thoroughly
                     var v = Uri.decode(rawV)
                     if (v.contains("%")) {
                         try { v = URLDecoder.decode(v, "UTF-8") } catch (_: Exception) {}
                     }
                     v = v.trim(' ', '|', '=')
 
-                    // 2. Strict Whitelist for Headers
                     when (k) {
                         "cookie", "http-cookie" -> if (extractedCookie.isBlank()) extractedCookie = v
                         "user-agent", "http-user-agent" -> extractedUa = v
@@ -71,20 +69,15 @@ object StreamFormatNormalizer {
                         "referer", "http-referrer", "http-referer" -> streamHeaders["Referer"] = v
                         "accept" -> streamHeaders["Accept"] = v
                         "authorization" -> streamHeaders["Authorization"] = v
-                        "key", "keyid", "kid", "licenseurl" -> {
-                            // These are M3uParser injected variables for DRM routing. DO NOT send as HTTP headers.
-                        }
-                        else -> {
-                            // Silently drop unrecognized variables (e.g., 'xxx') to prevent 403 CDN errors.
-                        }
+                        "key", "keyid", "kid", "licenseurl" -> { }
                     }
                 }
             }
         }
 
+        // FORCE A VALID USER AGENT to prevent 400 Bad Request on CDNs like Rutube
         streamHeaders["User-Agent"] = sanitizeUa(extractedUa, cleanUrl, forceDomainHeaders)
         streamHeaders["Accept"] = "*/*"
-        streamHeaders["Connection"] = "keep-alive"
 
         if (extractedCookie.isNotBlank()) {
             streamHeaders["Cookie"] = extractedCookie
@@ -93,9 +86,6 @@ object StreamFormatNormalizer {
         applyDomainSpoofing(cleanUrl, streamHeaders, forceDomainHeaders)
 
         val drmHeaders = mutableMapOf<String, String>().apply { putAll(streamHeaders) }
-
-        // 3. Removed duplicate __hdnea__ / hdntl URL injection entirely.
-        // Token auth is handled properly via the extracted Cookie header.
 
         var activeKid = keyId.trim()
         var activeK = key.trim()
@@ -134,6 +124,7 @@ object StreamFormatNormalizer {
             drmScheme = if (cleanUrl.contains("sunnxt") || cleanUrl.contains("tataplay")) C.CLEARKEY_UUID else C.WIDEVINE_UUID
         }
 
+        // Route through proxy only if strictly necessary, otherwise ExoPlayer's DefaultHttpDataSource handles cookies better
         val finalStreamUrl = if (bypassProxy) {
             cleanUrl
         } else {
@@ -183,19 +174,20 @@ object StreamFormatNormalizer {
     private fun sanitizeUa(ua: String, url: String, force: Boolean = false): String {
         val lowerUa = ua.lowercase()
         val lowerUrl = url.lowercase()
-        val isJunkUa = ua.isBlank() || lowerUa.contains("sayan10") || lowerUa.contains("ott navigator")
+
+        // Strict check: if UA is tiny (like "Mozilla") or blank, use a robust browser string
+        val isJunkUa = ua.isBlank() || ua.length < 15 || lowerUa == "mozilla" || lowerUa.contains("sayan10")
 
         val isJio = lowerUrl.contains("jio")
         if (isJio) {
-            return if (!force && !isJunkUa) ua
-            else if (lowerUrl.contains("_mob")) JIO_MOBILE_UA else JIO_STB_UA
+            return if (!force && !isJunkUa) ua else if (lowerUrl.contains("_mob")) JIO_MOBILE_UA else JIO_STB_UA
         }
 
         if (!force && ua.isNotBlank() && !isJunkUa) {
             return ua
         }
 
-        if (lowerUrl.contains("sonyliv") || lowerUrl.contains("fancode")) {
+        if (lowerUrl.contains("sonyliv") || lowerUrl.contains("fancode") || lowerUrl.contains("rutube")) {
             return GENERIC_BROWSER_UA
         }
 
@@ -210,23 +202,14 @@ object StreamFormatNormalizer {
         }
 
         if (lowerUrl.contains("jio")) {
-            set("Origin", "https://www.jiotv.com")
-            set("Referer", "https://www.jiotv.com/")
+            set("Origin", "https://jiotv.com")
+            set("Referer", "https://jiotv.com/")
+        } else if (lowerUrl.contains("rutube")) {
+            set("Origin", "https://rutube.ru")
+            set("Referer", "https://rutube.ru/")
         } else if (lowerUrl.contains("sonyliv")) {
             set("Origin", "https://www.sonyliv.com")
             set("Referer", "https://www.sonyliv.com/")
-        } else if (lowerUrl.contains("fancode")) {
-            set("Origin", "https://www.fancode.com")
-            set("Referer", "https://www.fancode.com/")
-        } else if (lowerUrl.contains("tataplay")) {
-            set("Origin", "https://watch.tataplay.com")
-            set("Referer", "https://watch.tataplay.com/")
-        } else if (lowerUrl.contains("yupp") || lowerUrl.contains("yupptv")) {
-            set("Origin", "https://www.yupptv.com")
-            set("Referer", "https://www.yupptv.com/")
-        } else if (lowerUrl.contains("hotstar")) {
-            set("Origin", "https://www.hotstar.com")
-            set("Referer", "https://www.hotstar.com/")
         } else {
             try {
                 val uri = java.net.URI(url)
