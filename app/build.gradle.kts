@@ -60,6 +60,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:$media3_version")
     implementation("androidx.media3:media3-exoplayer-hls:$media3_version")
     implementation("androidx.media3:media3-exoplayer-dash:$media3_version")
+    implementation("androidx.media3:media3-datasource-okhttp:$media3_version")
 
     // Coil (for loading and displaying movie posters and channel logos)
     implementation("io.coil-kt:coil-compose:2.6.0")

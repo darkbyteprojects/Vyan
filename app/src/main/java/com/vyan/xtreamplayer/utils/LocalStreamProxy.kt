@@ -12,36 +12,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
-import java.util.concurrent.TimeUnit
 
 object LocalStreamProxy {
     @Volatile
     private var server: ApplicationEngine? = null
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .addInterceptor { chain ->
-            val request = chain.request()
-            val response = chain.proceed(request)
-
-            // Check if we hit a redirect
-            if (response.isRedirect) {
-                val location = response.header("Location")
-                // If the redirect stays within the streaming ecosystem,
-                // ensure headers carry over cleanly.
-            }
-            response
-        }
-        .build()
+    private val client = NetworkClient.defaultClient
 
     const val PORT = 8080
 
@@ -85,7 +66,7 @@ object LocalStreamProxy {
         }
 
         val isDirectPassthrough = pathSegments.size == 1 && pathSegments[0] in setOf(
-            "manifest.mpd", "playlist.m3u8", "seg.ts", "segment", "video.mp4", "video.ts", "key.bin", "track.m3u8"
+            "manifest.mpd", "playlist.m3u8", "seg.ts", "segment", "video.mp4", "video.ts", "key.bin", "track.m3u8", "video.mkv"
         )
 
         val targetUrl = if (isDirectPassthrough) {
@@ -116,6 +97,7 @@ object LocalStreamProxy {
                                 put("k", hexToBase64Url(activeK))
                                 put("kid", hexToBase64Url(activeKid))
                             }))
+                            put("type", "temporary") // FIX: Added type
                         }
                         call.respondText(jwk.toString(), ContentType.Application.Json)
                         return@withContext
@@ -152,11 +134,8 @@ object LocalStreamProxy {
             response.close()
 
             val raw = String(responseBytes, Charsets.UTF_8).trim()
-
-            // FIX: Strip out prepended PHP warnings or HTML debug text from the license server response
             val jsonStartIndex = raw.indexOf("{").takeIf { it != -1 } ?: raw.indexOf("[")
             val sanitizedJson = if (jsonStartIndex != -1) raw.substring(jsonStartIndex).trim() else raw
-
             val convertedJwk = tryConvertFlatClearKeyToJwk(sanitizedJson)
 
             when {
@@ -184,6 +163,7 @@ object LocalStreamProxy {
                     put("k", hexToBase64Url(keyHex))
                     put("kid", hexToBase64Url(keyIdHex))
                 }))
+                put("type", "temporary") // FIX: Added type
             }.toString()
         } catch (e: Exception) { null }
     }
@@ -196,7 +176,6 @@ object LocalStreamProxy {
     }
 
     private suspend fun executeStreamRequest(call: ApplicationCall, targetUrl: String, headers: Map<String, String>, b64Headers: String, lane: String) = withContext(Dispatchers.IO) {
-        // FIX: Added aggressive fallback parsing for malformed IPTV URLs containing spaces or illegal characters
         val okHttpUrl = targetUrl.toHttpUrlOrNull() ?: try {
             URI(targetUrl).toASCIIString().toHttpUrlOrNull()
         } catch (e: Exception) { null }
@@ -207,16 +186,13 @@ object LocalStreamProxy {
         }
 
         val requestBuilder = Request.Builder().url(okHttpUrl)
-
         val ua = headers["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         requestBuilder.header("User-Agent", ua)
         requestBuilder.header("Accept", "*/*")
         requestBuilder.header("Connection", "keep-alive")
 
         val cookie = headers["Cookie"] ?: headers["cookie"]
-        if (!cookie.isNullOrBlank()) {
-            requestBuilder.header("Cookie", cookie)
-        }
+        if (!cookie.isNullOrBlank()) requestBuilder.header("Cookie", cookie)
 
         val range = call.request.headers["Range"]
         if (!range.isNullOrBlank()) requestBuilder.header("Range", range)
@@ -249,6 +225,11 @@ object LocalStreamProxy {
                 call.respondText(rewriteMpd(body, effectiveUrl, b64Headers, lane), ContentType.parse("application/dash+xml"))
             } else {
                 val mime = if (contentType.isNotBlank()) contentType else if (targetUrl.contains(".ts", true)) "video/mp2t" else "video/mp4"
+
+                response.header("Content-Range")?.let { call.response.headers.append(HttpHeaders.ContentRange, it) }
+                response.header("Accept-Ranges")?.let { call.response.headers.append(HttpHeaders.AcceptRanges, it) }
+                response.header("Content-Length")?.let { call.response.headers.append(HttpHeaders.ContentLength, it) }
+
                 call.respondOutputStream(ContentType.parse(mime), HttpStatusCode.fromValue(response.code)) {
                     response.body?.byteStream()?.use { it.copyTo(this) }
                     response.close()
@@ -264,14 +245,12 @@ object LocalStreamProxy {
             val trim = line.trim()
             when {
                 trim.isEmpty() -> ""
-                // FIX: Look inside #EXT tags to rewrite nested URIs for Audio, Subtitles, and AES-128 Encryption Keys
                 trim.startsWith("#") -> {
                     if (trim.contains("URI=\"")) {
                         trim.replace(Regex("""URI="([^"]+)"""")) { match ->
                             val originalUri = match.groupValues[1]
                             val abs = resolveWithQueryInheritance(baseUrl, originalUri)
                             val b64 = Base64.encodeToString(abs.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-
                             val ext = when {
                                 abs.lowercase().contains(".m3u8") -> "track.m3u8"
                                 abs.lowercase().contains(".key") || trim.contains("EXT-X-KEY") -> "key.bin"
@@ -279,9 +258,7 @@ object LocalStreamProxy {
                             }
                             "URI=\"http://127.0.0.1:$PORT/proxy/$lane/$b64/$b64Headers/$ext\""
                         }
-                    } else {
-                        line
-                    }
+                    } else line
                 }
                 else -> {
                     val abs = resolveWithQueryInheritance(baseUrl, trim)
@@ -354,6 +331,7 @@ object LocalStreamProxy {
             lower.contains(".mpd") -> "manifest.mpd"
             lower.contains(".mp4") -> "video.mp4"
             lower.contains(".ts") -> "video.ts"
+            lower.contains(".mkv") -> "video.mkv"
             else -> "playlist.m3u8"
         }
         return "http://127.0.0.1:$PORT/proxy/$lane/$b64Url/$b64Headers/$ext"

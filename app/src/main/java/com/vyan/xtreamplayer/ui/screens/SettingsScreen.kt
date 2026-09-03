@@ -3,7 +3,6 @@
 package com.vyan.xtreamplayer.ui.screens
 
 import android.content.Context
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -54,10 +53,8 @@ import com.vyan.xtreamplayer.data.managers.DataCache
 import com.vyan.xtreamplayer.models.AccountType
 import com.vyan.xtreamplayer.models.UserAccount
 import com.vyan.xtreamplayer.ui.components.CrashLogViewerDialog
-import com.vyan.xtreamplayer.ui.components.ExtremeUnlockLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 fun parseCustomCategoryFile(text: String): List<UserCustomCategory> {
     val categories = mutableListOf<UserCustomCategory>()
@@ -171,12 +168,77 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                         Text("App Mode", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp)
                                         Spacer(modifier = Modifier.height(4.dp))
                                         val activeMode = sharedPrefs.getString("active_app_mode", if (settingsManager.isLiveTvAutomatedMode) "advanced" else "basic") ?: "basic"
-                                        Text(text = when (activeMode) { "unified" -> "Unified Mode Active"; "extreme" -> "Extreme Mode Active"; "advanced" -> "Advanced Mode Active"; else -> "Basic Mode Active" }, fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold)
+                                        Text(text = when (activeMode) { "unified" -> "Unified Mode Active"; "extreme" -> "Extreme Mode Active"; "sports" -> "Live Sports Mode Active"; "advanced" -> "Advanced Mode Active"; else -> "Basic Mode Active" }, fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold)
                                     }
                                     Icon(Icons.Default.ChevronRight, null, tint = premiumTextSec)
                                 }
                             }
                         }
+                        item { Spacer(modifier = Modifier.height(16.dp)) }
+
+                        // NEW: Decoder Engine Configuration Card
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = premiumSurface),
+                                shape = RoundedCornerShape(20.dp),
+                                elevation = CardDefaults.cardElevation(0.dp)
+                            ) {
+                                var expandedDecoderMenu by remember { mutableStateOf(false) }
+                                val currentDecoder = settingsManager.decoderMode
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { expandedDecoderMenu = true }
+                                        .padding(20.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Decoder Engine", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = when (currentDecoder) {
+                                                "software" -> "Software Only (FFmpeg / CPU)"
+                                                "prefer_software" -> "Prefer Software (Fixes Black Screen)"
+                                                "hardware" -> "Hardware Only (GPU / Battery Saver)"
+                                                else -> "Auto (Hardware with Software Fallback)"
+                                            },
+                                            fontSize = 13.sp,
+                                            color = premiumTextSec,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    Box {
+                                        Icon(Icons.Default.Memory, contentDescription = "Decoder", tint = premiumTextSec)
+                                        DropdownMenu(
+                                            expanded = expandedDecoderMenu,
+                                            onDismissRequest = { expandedDecoderMenu = false },
+                                            modifier = Modifier.background(premiumSurface)
+                                        ) {
+                                            DropdownMenuItem(
+                                                text = { Text("Auto (Recommended)", color = premiumAccent, fontWeight = FontWeight.SemiBold) },
+                                                onClick = { settingsManager.decoderMode = "auto"; expandedDecoderMenu = false }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Prefer Software (Fixes Black Screen)", color = premiumAccent, fontWeight = FontWeight.SemiBold) },
+                                                onClick = { settingsManager.decoderMode = "prefer_software"; expandedDecoderMenu = false }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Hardware Only (Battery Saver)", color = premiumAccent, fontWeight = FontWeight.SemiBold) },
+                                                onClick = { settingsManager.decoderMode = "hardware"; expandedDecoderMenu = false }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Software Only", color = premiumAccent, fontWeight = FontWeight.SemiBold) },
+                                                onClick = { settingsManager.decoderMode = "software"; expandedDecoderMenu = false }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         item { Spacer(modifier = Modifier.height(16.dp)) }
                         item {
                             Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
@@ -211,7 +273,6 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
             }
         }
         "app_mode" -> {
-            var isExtremeUnlocked by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("is_extreme_unlocked", false)) }
             val isVerifiedIndian by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("is_verified_indian_network", false)) }
             var activeAppMode by rememberSaveable { mutableStateOf(sharedPrefs.getString("active_app_mode", if (settingsManager.isLiveTvAutomatedMode) "advanced" else "basic") ?: "basic") }
 
@@ -221,8 +282,8 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
             var seenExtreme by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("seen_mode_extreme", false)) }
             var seenUnified by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("seen_mode_unified", false)) }
 
-            val hasNewExtreme = isExtremeUnlocked && !seenExtreme
-            val hasNewUnified = isExtremeUnlocked && isVerifiedIndian && !seenUnified
+            val hasNewExtreme = !seenExtreme
+            val hasNewUnified = isVerifiedIndian && !seenUnified
             val hasAnyNewMode = hasNewExtreme || hasNewUnified
 
             Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
@@ -235,12 +296,12 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
 
                     val modes = mutableListOf(
                         Triple("basic", "Basic Mode", "Standard IPTV experience"),
-                        Triple("advanced", "Advanced Mode", "Portals & Custom filters")
+                        Triple("advanced", "Advanced Mode", "Portals & Custom filters"),
+                        Triple("extreme", "Extreme Mode", "Python scrapers & DRM"),
+                        Triple("sports", "Live Sports Mode", "Native sports schedules & streams")
                     )
-                    if (isExtremeUnlocked) {
-                        modes.add(Triple("extreme", "Extreme Mode", "Python scrapers & DRM"))
-                    }
-                    if (isExtremeUnlocked && isVerifiedIndian) {
+
+                    if (isVerifiedIndian) {
                         modes.add(Triple("unified", "Unified Mode", "All sources merged"))
                     }
 
@@ -318,7 +379,7 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                             }
                                             activeAppMode = key
                                             sharedPrefs.edit().putString("active_app_mode", key).apply()
-                                            settingsManager.isLiveTvAutomatedMode = (key == "advanced" || key == "extreme" || key == "unified")
+                                            settingsManager.isLiveTvAutomatedMode = (key == "advanced" || key == "extreme" || key == "unified" || key == "sports")
 
                                             if (key == "extreme") {
                                                 seenExtreme = true
@@ -409,31 +470,6 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                             border = null
                                         )
                                     }
-                                }
-
-                                HorizontalDivider(color = Color(0xFF27272A), modifier = Modifier.padding(vertical = 20.dp))
-                                Text("Disable Extreme Mode", fontWeight = FontWeight.Black, fontSize = 16.sp, color = premiumRed)
-                                Text("Locks the Extreme Hub and reverts the app to Advanced mode.", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
-                                Button(
-                                    onClick = {
-                                        isExtremeUnlocked = false
-                                        seenExtreme = false
-                                        activeAppMode = "advanced"
-                                        sharedPrefs.edit()
-                                            .putBoolean("is_extreme_unlocked", false)
-                                            .putBoolean("seen_mode_extreme", false)
-                                            .putString("active_app_mode", "advanced")
-                                            .apply()
-                                        settingsManager.isLiveTvAutomatedMode = true
-                                        onAccountSwitched()
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = premiumRed, contentColor = premiumAccent),
-                                    shape = RoundedCornerShape(16.dp),
-                                    modifier = Modifier.fillMaxWidth().height(56.dp)
-                                ) {
-                                    Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(20.dp))
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text("Lock Extreme Mode", fontWeight = FontWeight.Black, fontSize = 16.sp, fontFamily = FontFamily.SansSerif)
                                 }
                             }
                         }
@@ -553,16 +589,6 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                         }
                     }
 
-                    if (!isExtremeUnlocked && activeAppMode == "advanced" && initialAppMode == "advanced") {
-                        Spacer(modifier = Modifier.height(32.dp))
-                        ExtremeUnlockLock(
-                            isAlreadyUnlocked = isExtremeUnlocked,
-                            onUnlockSuccess = {
-                                sharedPrefs.edit().putBoolean("is_extreme_unlocked", true).apply()
-                                isExtremeUnlocked = true
-                            }
-                        )
-                    }
                     Spacer(modifier = Modifier.height(40.dp))
                 }
             }

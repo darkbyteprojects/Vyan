@@ -41,6 +41,7 @@ import com.vyan.xtreamplayer.network.CatalogSource
 import com.vyan.xtreamplayer.data.managers.DataCache
 import com.vyan.xtreamplayer.core.HardcodedChannels
 import com.vyan.xtreamplayer.utils.IptvAliveChecker
+import com.vyan.xtreamplayer.utils.NetworkClient
 import com.vyan.xtreamplayer.network.IptvVerifier
 import com.vyan.xtreamplayer.network.ScrapedPortal
 import com.vyan.xtreamplayer.data.managers.SettingsManager
@@ -52,7 +53,6 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 
@@ -74,7 +74,7 @@ fun HitEpgRow(channel: AggregatedChannel) {
         try {
             val result = withContext(Dispatchers.IO) {
                 val epgUrl = "${channel.portalUrl}/player_api.php?username=${channel.username}&password=${channel.pass}&action=get_short_epg&stream_id=${channel.streamId}&limit=1"
-                val response = OkHttpClient().newCall(Request.Builder().url(epgUrl).build()).execute()
+                val response = NetworkClient.defaultClient.newCall(Request.Builder().url(epgUrl).build()).execute()
                 if (response.isSuccessful) {
                     val root = JSONObject(response.body?.string() ?: return@withContext null)
                     val listings = root.optJSONArray("epg_listings")

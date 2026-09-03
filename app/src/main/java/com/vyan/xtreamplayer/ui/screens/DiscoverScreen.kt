@@ -41,7 +41,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -56,6 +55,7 @@ import com.vyan.xtreamplayer.data.managers.DataCache
 import com.vyan.xtreamplayer.ui.viewmodels.DiscoverViewModel
 import com.vyan.xtreamplayer.network.ScrapedPortal
 import com.vyan.xtreamplayer.models.UserAccount
+import com.vyan.xtreamplayer.utils.NetworkClient
 
 val portalExpiryCache = ConcurrentHashMap<String, String>()
 
@@ -362,7 +362,7 @@ fun PortalItemCard(portal: ScrapedPortal, isEditMode: Boolean, isSelected: Boole
         scope.launch(Dispatchers.IO) {
             try {
                 var safeUrl = portal.url; if (!safeUrl.startsWith("http")) safeUrl = "http://$safeUrl"; if (safeUrl.endsWith("/")) safeUrl = safeUrl.dropLast(1)
-                val response = OkHttpClient().newCall(Request.Builder().url("$safeUrl/player_api.php?username=${portal.username}&password=${portal.pass}").build()).execute()
+                val response = NetworkClient.defaultClient.newCall(Request.Builder().url("$safeUrl/player_api.php?username=${portal.username}&password=${portal.pass}").build()).execute()
                 if (response.isSuccessful) {
                     val userInfo = JSONObject(response.body?.string() ?: "").optJSONObject("user_info")
                     if (userInfo != null) {

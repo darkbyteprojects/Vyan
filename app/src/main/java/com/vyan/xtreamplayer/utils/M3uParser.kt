@@ -5,20 +5,17 @@ import android.net.Uri
 import com.vyan.xtreamplayer.models.M3uChannel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStream
 import java.io.InputStreamReader
-import java.util.concurrent.TimeUnit
 
 object M3uParser {
 
-    private val client = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
+    private val client = NetworkClient.defaultClient
 
-    // Expanded dictionaries to catch Hotstar / Sports specific keys
     private val URL_KEYS = listOf("m3u8", "stream_url", "url", "link", "play_url", "src", "file", "video_url", "source")
     private val NAME_KEYS = listOf("title", "name", "match_name", "channel_name", "stream_display_name", "ch_name")
     private val LOGO_KEYS = listOf("logo", "icon", "poster_image", "stream_icon", "tvg-logo", "pic", "image")
@@ -66,7 +63,6 @@ object M3uParser {
         return out
     }
 
-    // Context-Aware Recursive Crawler
     private fun extractChannelsRecursively(
         node: Any?,
         out: MutableList<M3uChannel>,
@@ -77,7 +73,6 @@ object M3uParser {
     ) {
         when (node) {
             is JSONObject -> {
-                // Inherit parent metadata if the child is missing it
                 val currentName = getFirstMatchingString(node, NAME_KEYS).ifBlank { parentName }
                 val currentLogo = getFirstMatchingString(node, LOGO_KEYS).ifBlank { parentLogo }
                 val currentGroup = getFirstMatchingString(node, GROUP_KEYS).ifBlank { parentGroup }
@@ -85,7 +80,6 @@ object M3uParser {
                 val url = getFirstMatchingString(node, URL_KEYS)
 
                 if (url.isNotBlank() && (url.startsWith("http", true) || url.endsWith(".m3u8", true) || url.endsWith(".ts", true))) {
-                    // Format names beautifully (e.g., "RCB vs SRH (Hindi)")
                     val finalName = if (nodeKey.isNotBlank() && currentName == parentName && !currentName.contains(nodeKey, true)) {
                         "$currentName (${nodeKey.replaceFirstChar { it.uppercase() }})"
                     } else {
@@ -130,20 +124,22 @@ object M3uParser {
             else -> ""
         }
 
-        // Universal Header Extraction for JSON objects
         val referer = obj.optString("referer", obj.optString("Referer", ""))
         val origin = obj.optString("origin", obj.optString("Origin", ""))
         val ua = getFirstMatchingString(obj, UA_KEYS)
         val cookie = getFirstMatchingString(obj, COOKIE_KEYS)
 
-        // Inject headers natively into the URL string so Normalizer catches them
         var finalUrl = resolvedUrl
         if (!finalUrl.contains("|")) {
             val pipeParams = mutableListOf<String>()
-            if (ua.isNotBlank()) pipeParams.add("User-Agent=$ua")
-            if (referer.isNotBlank()) pipeParams.add("Referer=$referer")
-            if (origin.isNotBlank()) pipeParams.add("Origin=$origin")
-            if (cookie.isNotBlank()) pipeParams.add("Cookie=$cookie")
+            if (ua.isNotBlank()) pipeParams.add("User-Agent=${Uri.encode(ua)}")
+            if (referer.isNotBlank()) pipeParams.add("Referer=${Uri.encode(referer)}")
+            if (origin.isNotBlank()) pipeParams.add("Origin=${Uri.encode(origin)}")
+            if (cookie.isNotBlank()) pipeParams.add("Cookie=${Uri.encode(cookie)}")
+
+            // FIX BUG 1: Embed JSON DRM keys directly into the pipe URL
+            if (kId.isNotBlank()) pipeParams.add("keyid=${Uri.encode(kId)}")
+            if (k.isNotBlank()) pipeParams.add("key=${Uri.encode(k)}")
 
             if (pipeParams.isNotEmpty()) {
                 finalUrl = "$finalUrl|${pipeParams.joinToString("&")}"
@@ -245,10 +241,20 @@ object M3uParser {
                 var finalUrl = line
                 if (!finalUrl.contains("|")) {
                     val pipeParams = mutableListOf<String>()
-                    if (pendingUserAgent.isNotBlank()) pipeParams.add("User-Agent=$pendingUserAgent")
-                    if (pendingReferer.isNotBlank()) pipeParams.add("Referer=$pendingReferer")
-                    if (pendingOrigin.isNotBlank()) pipeParams.add("Origin=$pendingOrigin")
-                    if (pendingCookie.isNotBlank()) pipeParams.add("Cookie=$pendingCookie")
+                    if (pendingUserAgent.isNotBlank()) pipeParams.add("User-Agent=${Uri.encode(pendingUserAgent)}")
+                    if (pendingReferer.isNotBlank()) pipeParams.add("Referer=${Uri.encode(pendingReferer)}")
+                    if (pendingOrigin.isNotBlank()) pipeParams.add("Origin=${Uri.encode(pendingOrigin)}")
+                    if (pendingCookie.isNotBlank()) pipeParams.add("Cookie=${Uri.encode(pendingCookie)}")
+
+                    // FIX BUG 1: Embed M3U #KODIPROP DRM keys directly into the pipe URL
+                    if (pendingLicenseKey.isNotBlank()) {
+                        if (pendingLicenseKey.contains(":")) {
+                            pipeParams.add("keyid=${Uri.encode(pendingLicenseKey.substringBefore(":"))}")
+                            pipeParams.add("key=${Uri.encode(pendingLicenseKey.substringAfter(":"))}")
+                        } else {
+                            pipeParams.add("licenseurl=${Uri.encode(pendingLicenseKey)}")
+                        }
+                    }
 
                     if (pipeParams.isNotEmpty()) {
                         finalUrl = "$finalUrl|${pipeParams.joinToString("&")}"

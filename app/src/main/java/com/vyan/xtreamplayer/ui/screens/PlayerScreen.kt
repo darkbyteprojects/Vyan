@@ -58,18 +58,20 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource.HttpDataSourceException
 import androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.vyan.xtreamplayer.data.managers.SettingsManager
+import com.vyan.xtreamplayer.utils.NetworkClient
 import com.vyan.xtreamplayer.utils.StreamFormatNormalizer
 import kotlinx.coroutines.delay
 
@@ -129,12 +131,6 @@ fun PlayerScreen(
     cookie: String = "",
     keyId: String = "",
     key: String = "",
-    // Which playlist format this channel came from (Format 1 / 2 / 3 / Unknown).
-    // Drives which dedicated StreamFormatNormalizer path is used. Defaults to
-    // UNKNOWN, which is safe: it routes to the same generic behavior this
-    // screen always had. If your source-switch logic (AggregatedChannel /
-    // UnifiedSource) starts carrying a `format` field too, thread it into
-    // `currentFormat` in the failover blocks below the same way keyId/key are.
     headers: Map<String, String> = emptyMap(),
     settingsManager: SettingsManager? = null,
     onBack: () -> Unit
@@ -148,15 +144,14 @@ fun PlayerScreen(
     val premiumTextSec = Color(0xFFA1A1AA)
 
     var currentSourceIndex by remember { mutableIntStateOf(0) }
+    var forceKnownHeaders by remember { mutableStateOf(false) }
+    var retryTrigger by remember { mutableIntStateOf(0) }
 
     var currentUrl by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].streamUrl else if (sources.isNotEmpty()) sources[0].streamUrl else streamUrl) }
     var currentUa by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].userAgent else userAgent) }
     var currentCookie by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].cookie else cookie) }
     var currentKeyId by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].keyId else keyId) }
     var currentKey by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].key else key) }
-    // NOTE: UnifiedSource doesn't carry a `format` field yet, so source
-    // failover (below) can't update this per-source. It stays pinned to the
-    // format of the channel PlayerScreen was opened with.
     var currentHeaders by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].headers else headers) }
 
     var isError by remember { mutableStateOf(false) }
@@ -182,6 +177,9 @@ fun PlayerScreen(
     var lastPositionChangeAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var bufferingSince by remember { mutableStateOf<Long?>(null) }
 
+    var hasRenderedFirstFrame by remember { mutableStateOf(false) }
+    val activeDecoderMode = remember { settingsManager?.decoderMode ?: "auto" }
+
     var isLiveWindow by remember { mutableStateOf(isLiveStream) }
 
     BackHandler {
@@ -197,11 +195,18 @@ fun PlayerScreen(
 
     val trackSelector = remember { if (isPreview) null else DefaultTrackSelector(context) }
 
-    // FIX: Force ExoPlayer to avoid secure decoders unless explicitly required
+    // ExoPlayer is properly guarded by remember and initialized once per composition scope
     val exoPlayer = remember {
         if (isPreview) null else {
+            val extensionMode = when (activeDecoderMode) {
+                "software" -> androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+                "prefer_software" -> androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                "hardware" -> androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
+                else -> androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+            }
+
             val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(context)
-                .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+                .setExtensionRendererMode(extensionMode)
                 .setEnableDecoderFallback(true)
 
             ExoPlayer.Builder(context, renderersFactory)
@@ -210,42 +215,137 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(currentUrl, currentUa, currentCookie, currentKeyId, currentKey, currentHeaders, currentSourceIndex) {
+    LaunchedEffect(currentUrl, currentUa, currentCookie, currentKeyId, currentKey, currentHeaders, currentSourceIndex, forceKnownHeaders, retryTrigger) {
         if (isPreview) return@LaunchedEffect
-        isLoading = true; isError = false; watchdogMessage = null
+        isLoading = true; isError = false; watchdogMessage = null; hasRenderedFirstFrame = false
         openedAt = System.currentTimeMillis(); lastPositionMs = 0L; lastPositionChangeAt = System.currentTimeMillis()
         bufferingSince = null
 
         try {
-            // Let the normalizer determine the optimal User-Agent based on domain requirements
+            var actualUrlToPlay = currentUrl
+            val isSportsMode = currentUrl.contains("||")
+
+            if (isSportsMode) {
+                val slug = currentUrl.substringBefore("||")
+                val fallbackLink = currentUrl.substringAfter("||", "")
+
+                if (!slug.startsWith("http", ignoreCase = true) && slug.isNotBlank()) {
+                    watchdogMessage = "Fetching secure stream..."
+                    val links = com.vyan.xtreamplayer.sports.SportsEngine.getStreamLinks(slug)
+
+                    actualUrlToPlay = if (links.isNotEmpty()) {
+                        links.first().url
+                    } else if (fallbackLink.isNotBlank()) {
+                        fallbackLink
+                    } else {
+                        throw Exception("Match has not started yet or stream is unavailable.")
+                    }
+                } else if (fallbackLink.isNotBlank()) {
+                    actualUrlToPlay = fallbackLink
+                }
+            }
+
+            val urlWithoutHeaders = if (actualUrlToPlay.contains("?|")) actualUrlToPlay.substringBefore("?|") else actualUrlToPlay.substringBefore("|")
+            val extractedHeaders = mutableMapOf<String, String>()
+            var parsedKey = currentKey
+            var parsedKeyId = currentKeyId
+            var parsedLicenseUrl = ""
+
+            val pipePart = if (actualUrlToPlay.contains("?|")) actualUrlToPlay.substringAfter("?|") else if (actualUrlToPlay.contains("|")) actualUrlToPlay.substringAfter("|") else ""
+            if (pipePart.isNotBlank()) {
+                val headerParams = pipePart.split("&")
+                headerParams.forEach { param ->
+                    val kv = param.split("=", limit = 2)
+                    if (kv.size == 2) {
+                        val keyParam = kv[0].trim().lowercase()
+                        val value = Uri.decode(kv[1].trim())
+                        when (keyParam) {
+                            "cookie" -> extractedHeaders["Cookie"] = value
+                            "origin" -> extractedHeaders["Origin"] = value
+                            "user-agent" -> extractedHeaders["User-Agent"] = value
+                            "referer", "referrer" -> extractedHeaders["Referer"] = value
+                            "key" -> parsedKey = value
+                            "keyid", "kid" -> parsedKeyId = value
+                            "licenseurl" -> parsedLicenseUrl = value
+                            else -> extractedHeaders[kv[0].trim()] = value
+                        }
+                    }
+                }
+            }
+
+            if (!com.vyan.xtreamplayer.utils.StreamResolver.isDirectStream(urlWithoutHeaders)) {
+                watchdogMessage = "Bypassing web player..."
+                val resolved = com.vyan.xtreamplayer.utils.StreamResolver.resolveEmbedUrl(context, urlWithoutHeaders)
+                if (resolved != null) {
+                    actualUrlToPlay = resolved
+                } else {
+                    throw Exception("Failed to extract video stream from web player.")
+                }
+            }
+
+            watchdogMessage = null
+
+            var safeUserAgent = extractedHeaders["User-Agent"] ?: currentUa
+            if (safeUserAgent.isBlank() || safeUserAgent.contains("ExoPlayer")) {
+                safeUserAgent = "Mozilla/5.0 (Windows NT 10.0; rv:78.0) Gecko/20100101 Firefox/78.0"
+                extractedHeaders["User-Agent"] = safeUserAgent
+            }
+
+            val combinedHeaders = currentHeaders.toMutableMap()
+            combinedHeaders.putAll(extractedHeaders)
+
+            val cleanStreamUrl = if (actualUrlToPlay.contains("?|")) actualUrlToPlay.substringBefore("?|") else if (actualUrlToPlay.contains("|")) actualUrlToPlay.substringBefore("|") else actualUrlToPlay
+
             val streamConfig = StreamFormatNormalizer.normalize(
-                url = currentUrl,
-                keyId = currentKeyId,
-                key = currentKey,
-                cookie = currentCookie,
-                userAgent = currentUa,
-                baseHeaders = currentHeaders
+                url = cleanStreamUrl,
+                keyId = parsedKeyId,
+                key = parsedKey,
+                cookie = extractedHeaders["Cookie"] ?: currentCookie,
+                userAgent = safeUserAgent,
+                baseHeaders = combinedHeaders,
+                bypassProxy = true,
+                forceDomainHeaders = forceKnownHeaders
             )
 
             val resolvedUa = streamConfig.headers["User-Agent"] ?: "ExoPlayer/2.18.1 (Linux;Android 12) ExoPlayerLib/2.18.1"
 
-            val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            val okHttpDataSourceFactory = OkHttpDataSource.Factory(NetworkClient.defaultClient)
                 .setUserAgent(resolvedUa)
-                .setAllowCrossProtocolRedirects(true)
-                .setKeepPostFor302Redirects(true)
-                .setConnectTimeoutMs(15000)
-                .setReadTimeoutMs(15000)
                 .setDefaultRequestProperties(streamConfig.headers)
 
-            val mediaSourceFactory = DefaultMediaSourceFactory(context).setDataSourceFactory(httpDataSourceFactory)
+            val loadErrorPolicy = DefaultLoadErrorHandlingPolicy(3)
+
+            val mediaSourceFactory = DefaultMediaSourceFactory(context)
+                .setDataSourceFactory(okHttpDataSourceFactory)
+                .setLoadErrorHandlingPolicy(loadErrorPolicy)
+
+            val lowerUrl = cleanStreamUrl.lowercase()
+            val detectedMimeType = when {
+                lowerUrl.contains(".m3u8") -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
+                lowerUrl.contains(".mpd") -> androidx.media3.common.MimeTypes.APPLICATION_MPD
+                lowerUrl.contains(".mkv") -> androidx.media3.common.MimeTypes.VIDEO_MATROSKA
+                lowerUrl.contains(".mp4") -> androidx.media3.common.MimeTypes.VIDEO_MP4
+                lowerUrl.contains(".ts") -> androidx.media3.common.MimeTypes.VIDEO_MP2T
+                else -> streamConfig.mimeType
+            }
+
             val mediaItemBuilder = MediaItem.Builder()
                 .setUri(Uri.parse(streamConfig.proxyStreamUrl))
-                .setMimeType(streamConfig.mimeType)
+                .setMimeType(detectedMimeType)
 
-            if (streamConfig.drmScheme != null) {
+            if (parsedLicenseUrl.isNotBlank()) {
+                mediaItemBuilder.setDrmConfiguration(
+                    MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)
+                        .setLicenseUri(parsedLicenseUrl)
+                        .setMultiSession(true)
+                        .setLicenseRequestHeaders(combinedHeaders)
+                        .build()
+                )
+            } else if (streamConfig.drmScheme != null) {
                 if (streamConfig.localJwk != null) {
                     val jwkBytes = streamConfig.localJwk.toByteArray(Charsets.UTF_8)
                     val clearKeyDrmManager = DefaultDrmSessionManager.Builder()
+                        .setMultiSession(true)
                         .setUuidAndExoMediaDrmProvider(streamConfig.drmScheme, FrameworkMediaDrm.DEFAULT_PROVIDER)
                         .build(LocalMediaDrmCallback(jwkBytes))
                     mediaSourceFactory.setDrmSessionManagerProvider { clearKeyDrmManager }
@@ -257,6 +357,7 @@ fun PlayerScreen(
                     mediaItemBuilder.setDrmConfiguration(
                         MediaItem.DrmConfiguration.Builder(streamConfig.drmScheme)
                             .setLicenseUri(streamConfig.proxyDrmLicenseUrl)
+                            .setMultiSession(true)
                             .setLicenseRequestHeaders(activeDrmHeaders)
                             .build()
                     )
@@ -269,41 +370,80 @@ fun PlayerScreen(
             exoPlayer?.playWhenReady = true
 
         } catch (e: Exception) {
-            isLoading = false; isError = true; errorMessage = e.message ?: "Failed to initialize player"
+            isLoading = false
+            isError = true
+            errorMessage = e.message ?: "Failed to initialize player"
         }
     }
 
     DisposableEffect(exoPlayer) {
         if (exoPlayer == null) return@DisposableEffect onDispose { }
         val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                if (!hasRenderedFirstFrame) hasRenderedFirstFrame = true
+                if (isLoading) isLoading = false
+                if (isError) isError = false
+                if (watchdogMessage != null) watchdogMessage = null
+            }
+
             override fun onEvents(player: Player, events: Player.Events) {
                 if (events.contains(Player.EVENT_TIMELINE_CHANGED) || events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
                     val duration = player.duration
-                    isLiveWindow = player.isCurrentWindowDynamic || duration == C.TIME_UNSET || duration <= 0L
+                    val newIsLive = player.isCurrentWindowDynamic || duration == C.TIME_UNSET || duration <= 0L
+                    if (isLiveWindow != newIsLive) isLiveWindow = newIsLive
                 }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 when (playbackState) {
-                    Player.STATE_BUFFERING -> { isLoading = true; if (bufferingSince == null) bufferingSince = System.currentTimeMillis() }
-                    Player.STATE_READY -> {
-                        isLoading = false; isError = false; bufferingSince = null
-                        val newDuration = exoPlayer.duration
-                        durationMs = if (newDuration == C.TIME_UNSET) 0L else newDuration
+                    Player.STATE_BUFFERING -> {
+                        if (!isLoading) isLoading = true
+                        if (bufferingSince == null) bufferingSince = System.currentTimeMillis()
                     }
-                    Player.STATE_ENDED -> isLoading = false
-                }
-            }
-            override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
-            override fun onVideoSizeChanged(videoSize: VideoSize) {
-                if (videoSize.height > 0) {
-                    currentVideoHeight = videoSize.height
-                }
-            }
-            override fun onPlayerError(error: PlaybackException) {
-                val totalSources = if (unifiedSources.isNotEmpty()) unifiedSources.size else sources.size
+                    Player.STATE_READY -> {
+                        if (bufferingSince != null) bufferingSince = null
+                        if (isLoading && (hasRenderedFirstFrame || currentVideoHeight > 0)) {
+                            isLoading = false
+                        }
+                        if (isError) isError = false
 
-                if (totalSources > 1 && currentSourceIndex < totalSources - 1) {
+                        val newDuration = exoPlayer.duration
+                        val safeDuration = if (newDuration == C.TIME_UNSET) 0L else newDuration
+                        if (durationMs != safeDuration) durationMs = safeDuration
+                    }
+                    Player.STATE_ENDED -> {
+                        if (isLoading) isLoading = false
+                    }
+                }
+            }
+
+            override fun onIsPlayingChanged(playing: Boolean) {
+                if (isPlaying != playing) isPlaying = playing
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.height > 0 && currentVideoHeight != videoSize.height) {
+                    currentVideoHeight = videoSize.height
+                    if (!hasRenderedFirstFrame) hasRenderedFirstFrame = true
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                val cause = error.cause
+                val rejectionCode = (cause as? InvalidResponseCodeException)?.responseCode
+
+                if (!forceKnownHeaders && (rejectionCode == 401 || rejectionCode == 403 || rejectionCode == 404)) {
+                    forceKnownHeaders = true
+                    watchdogMessage = "HTTP $rejectionCode. Retrying with default headers..."
+                    return
+                }
+
+                forceKnownHeaders = false
+                hasRenderedFirstFrame = false
+
+                val actualTotalSources = maxOf(1, if (unifiedSources.isNotEmpty()) unifiedSources.size else sources.size)
+
+                if (actualTotalSources > 1 && currentSourceIndex < actualTotalSources - 1) {
                     currentSourceIndex++
                     if (unifiedSources.isNotEmpty()) {
                         val next = unifiedSources[currentSourceIndex]
@@ -313,13 +453,13 @@ fun PlayerScreen(
                         currentKeyId = next.keyId
                         currentKey = next.key
                         currentHeaders = next.headers
-                    } else {
+                    } else if (sources.isNotEmpty()) {
                         currentUrl = sources[currentSourceIndex].streamUrl
                     }
-                    watchdogMessage = "Stream error. Automatically switching to source ${currentSourceIndex + 1}..."
+                    watchdogMessage = "Stream error. Switching to source ${currentSourceIndex + 1}..."
                 } else {
-                    isLoading = false; isError = true
-                    val cause = error.cause
+                    isLoading = false
+                    isError = true
                     errorMessage = when {
                         error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> "Stream blocked. Server returned HTML instead of video."
                         cause is InvalidResponseCodeException -> "HTTP ${cause.responseCode}: CDN Rejected Request."
@@ -331,6 +471,7 @@ fun PlayerScreen(
         }
         exoPlayer.addListener(listener)
         onDispose {
+            // Player release is only triggered when PlayerScreen leaves the composition permanently (popped off stack)
             exoPlayer.removeListener(listener)
             exoPlayer.release()
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -344,26 +485,48 @@ fun PlayerScreen(
             val now = System.currentTimeMillis()
             val currentPos = exoPlayer.currentPosition
             val isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING
+            val isReady = exoPlayer.playbackState == Player.STATE_READY
             val isCurrentlyPlaying = exoPlayer.isPlaying
 
             if (currentPos != lastPositionMs && !isBuffering) {
                 lastPositionMs = currentPos
                 lastPositionChangeAt = now
-                watchdogMessage = null
+                if (hasRenderedFirstFrame && watchdogMessage != null) watchdogMessage = null
             } else if (isCurrentlyPlaying) {
-                lastPositionChangeAt = now
+                if (now - lastPositionChangeAt > 1000) {
+                    lastPositionChangeAt = now
+                }
             }
 
-            var needsFailover = false; var reason = ""
-            if (isBuffering && bufferingSince != null && (now - bufferingSince!! > 12000)) { needsFailover = true; reason = "Buffering timeout" }
-            else if (!isLiveWindow && isCurrentlyPlaying && !isBuffering && lastPositionMs > 0 && (now - lastPositionChangeAt > 10000)) { needsFailover = true; reason = "Stream frozen" }
-            else if (lastPositionMs == 0L && !isCurrentlyPlaying && (now - openedAt > 15000)) { needsFailover = true; reason = "Connection dropped" }
-            else if (isError) { needsFailover = true; reason = "Stream error" }
+            var needsFailover = false
+            var reason = ""
 
-            val totalSources = if (unifiedSources.isNotEmpty()) unifiedSources.size else sources.size
+            val isVideoExpected = exoPlayer.currentTracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
+            // Bumped threshold to 15 seconds to prevent false-positive failures on slow initial manifests
+            if (isReady && isVideoExpected && !hasRenderedFirstFrame && (now - openedAt > 15000)) {
+                needsFailover = true
+                reason = "Video decode stalled"
+            } else if (isBuffering && bufferingSince != null && (now - bufferingSince!! > 15000)) {
+                needsFailover = true
+                reason = "Buffering timeout"
+            } else if (!isLiveWindow && isCurrentlyPlaying && !isBuffering && lastPositionMs > 0 && (now - lastPositionChangeAt > 10000)) {
+                needsFailover = true
+                reason = "Stream frozen"
+            } else if (lastPositionMs == 0L && !isCurrentlyPlaying && (now - openedAt > 20000)) {
+                needsFailover = true
+                reason = "Connection dropped"
+            } else if (isError) {
+                needsFailover = true
+                reason = "Stream error"
+            }
 
-            if (needsFailover && totalSources > 0) {
-                if (currentSourceIndex < totalSources - 1) {
+            val actualTotalSources = maxOf(1, if (unifiedSources.isNotEmpty()) unifiedSources.size else sources.size)
+
+            if (needsFailover && actualTotalSources > 0) {
+                hasRenderedFirstFrame = false
+                forceKnownHeaders = false
+
+                if (actualTotalSources > 1 && currentSourceIndex < actualTotalSources - 1) {
                     currentSourceIndex++
                     watchdogMessage = "$reason. Switching to Source ${currentSourceIndex + 1}..."
 
@@ -375,7 +538,7 @@ fun PlayerScreen(
                         currentKeyId = next.keyId
                         currentKey = next.key
                         currentHeaders = next.headers
-                    } else {
+                    } else if (sources.isNotEmpty()) {
                         currentUrl = sources[currentSourceIndex].streamUrl
                     }
                     delay(2000)
@@ -383,40 +546,47 @@ fun PlayerScreen(
                     if (unifiedSources.isNotEmpty() && com.vyan.xtreamplayer.ui.screens.UnifiedSearchManager.isSearching) {
                         watchdogMessage = "Waiting for background search to find backups..."
                         exoPlayer.pause()
-                    } else if (totalSources > 1) {
+                    } else if (isLiveWindow) {
                         currentSourceIndex = 0
-                        watchdogMessage = "All sources failed. Restarting cycle..."
+                        watchdogMessage = if (actualTotalSources > 1) "All sources failed. Restarting cycle..." else "Connection lost. Reconnecting..."
 
-                        if (unifiedSources.isNotEmpty()) {
-                            val next = unifiedSources[currentSourceIndex]
-                            currentUrl = next.streamUrl
-                            currentUa = next.userAgent
-                            currentCookie = next.cookie
-                            currentKeyId = next.keyId
-                            currentKey = next.key
-                            currentHeaders = next.headers
-                        } else {
-                            currentUrl = sources[currentSourceIndex].streamUrl
+                        if (actualTotalSources > 1) {
+                            if (unifiedSources.isNotEmpty()) {
+                                val next = unifiedSources[currentSourceIndex]
+                                currentUrl = next.streamUrl
+                                currentUa = next.userAgent
+                                currentCookie = next.cookie
+                                currentKeyId = next.keyId
+                                currentKey = next.key
+                                currentHeaders = next.headers
+                            } else if (sources.isNotEmpty()) {
+                                currentUrl = sources[currentSourceIndex].streamUrl
+                            }
                         }
+
                         delay(2000)
+                        retryTrigger++
                     } else {
                         watchdogMessage = "Stream offline. No backup sources available."
                         exoPlayer.pause()
+                        isError = true
                     }
                 }
             }
         }
     }
 
-    DisposableEffect(Unit) {
-        val window = activity?.window
-        window?.let { WindowInsetsControllerCompat(it, it.decorView).apply { hide(WindowInsetsCompat.Type.systemBars()); systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE } }
-        onDispose { window?.let { WindowInsetsControllerCompat(it, it.decorView).show(WindowInsetsCompat.Type.systemBars()) } }
-    }
-
     LaunchedEffect(exoPlayer) {
         if (exoPlayer == null) return@LaunchedEffect
-        while (true) { if (exoPlayer.isPlaying) currentPositionMs = exoPlayer.currentPosition; delay(500) }
+        while (true) {
+            if (exoPlayer.isPlaying) {
+                val newPos = exoPlayer.currentPosition
+                if (kotlin.math.abs(currentPositionMs - newPos) >= 500) {
+                    currentPositionMs = newPos
+                }
+            }
+            delay(500)
+        }
     }
 
     LaunchedEffect(areControlsVisible, showSourcePickerModal, showQualityPickerModal, showResizeDialog, showTrackSelectionDialog, showHamburgerMenu) {
@@ -470,7 +640,7 @@ fun PlayerScreen(
         }
 
         val totalSourcesCount = if (unifiedSources.isNotEmpty()) unifiedSources.size else sources.size
-        if (isError && totalSourcesCount <= 1) {
+        if (isError && totalSourcesCount <= 1 && !isLiveWindow) {
             Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.9f)), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 32.dp)) {
                     Icon(Icons.Default.ErrorOutline, null, tint = Color(0xFFE50914), modifier = Modifier.size(64.dp))
@@ -478,6 +648,16 @@ fun PlayerScreen(
                     Text("Playback Failed", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 20.sp)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(errorMessage ?: "Unknown error", color = premiumTextSec, fontSize = 14.sp, textAlign = TextAlign.Center)
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Button(
+                        onClick = { retryTrigger++ },
+                        colors = ButtonDefaults.buttonColors(containerColor = premiumAccent, contentColor = Color.Black),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Retry Connection", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
@@ -708,6 +888,8 @@ fun PlayerScreen(
                         currentKeyId = source.keyId
                         currentKey = source.key
                         currentHeaders = source.headers
+                        forceKnownHeaders = false
+                        hasRenderedFirstFrame = false
                         showSourcePickerModal = false
                     }
                 )
@@ -722,6 +904,8 @@ fun PlayerScreen(
                     onClick = {
                         currentSourceIndex = index
                         currentUrl = source.streamUrl
+                        forceKnownHeaders = false
+                        hasRenderedFirstFrame = false
                         showSourcePickerModal = false
                     }
                 )

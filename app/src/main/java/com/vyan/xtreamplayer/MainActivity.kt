@@ -60,9 +60,10 @@ data class ActivePlayingStream(
     val cookie: String = "",
     val keyId: String = "",
     val key: String = "",
-    val headers: Map<String, String> = emptyMap()
+    val headers: Map<String, String> = emptyMap(),
+    // FIX BUG 4: State added for live/VOD routing
+    val isLiveStream: Boolean = true
 )
-
 class MainActivity : ComponentActivity() {
 
     private lateinit var accountManager: AccountManager
@@ -172,6 +173,7 @@ class MainActivity : ComponentActivity() {
                 val isUnifiedMode = activeAppMode == "unified"
                 val isExtremeMode = activeAppMode == "extreme"
                 val isAdvancedMode = activeAppMode == "advanced"
+                val isSportsMode = activeAppMode == "sports"
 
                 BackHandler(enabled = true) {
                     when {
@@ -234,7 +236,16 @@ class MainActivity : ComponentActivity() {
                             saveableStateHolder.SaveableStateProvider(currentTab) {
                                 when (currentTab) {
                                     "live_tv" -> {
-                                        if (isUnifiedMode) {
+                                        if (isSportsMode) {
+                                            SportsScreen(
+                                                onPlayMatch = { payload, title ->
+                                                    activeStream = ActivePlayingStream(
+                                                        url = payload,
+                                                        title = title
+                                                    )
+                                                }
+                                            )
+                                        } else if (isUnifiedMode) {
                                             UnifiedLiveTVScreen(
                                                 settingsManager = settingsManager,
                                                 accountManager = accountManager,
@@ -337,6 +348,7 @@ class MainActivity : ComponentActivity() {
                                             )
                                         }
                                     }
+
                                     "extreme_hub" -> {
                                         ExtremeHubScreen(
                                             settingsManager = settingsManager,
@@ -406,13 +418,16 @@ class MainActivity : ComponentActivity() {
                                                             previewPortal!!.pass,
                                                             movie.stream_id,
                                                             movie.container_extension ?: "mp4"
-                                                        ), title = movie.name
+                                                        ),
+                                                        title = movie.name,
+                                                        isLiveStream = false
                                                     )
                                                 },
                                                 onPlaySeries = { seriesItem: SeriesItem ->
                                                     activeStream = ActivePlayingStream(
                                                         url = "",
-                                                        title = seriesItem.name
+                                                        title = seriesItem.name,
+                                                        isLiveStream = false
                                                     )
                                                 }
                                             )
@@ -438,7 +453,9 @@ class MainActivity : ComponentActivity() {
                                                         activeAccount.pass,
                                                         movie.stream_id,
                                                         movie.container_extension ?: "mp4"
-                                                    ), title = movie.name
+                                                    ),
+                                                    title = movie.name,
+                                                    isLiveStream = false // Set as VOD
                                                 )
                                         },
                                         onLoginClick = { isAddingAccount = true },
@@ -457,7 +474,8 @@ class MainActivity : ComponentActivity() {
                                                         episode.id,
                                                         episode.container_extension ?: "mp4"
                                                     ),
-                                                    title = "${series.name} - E${episode.episode_num}: ${episode.title}"
+                                                    title = "${series.name} - E${episode.episode_num}: ${episode.title}",
+                                                    isLiveStream = false // Set as VOD
                                                 )
                                         },
                                         onLoginClick = { isAddingAccount = true },
@@ -497,6 +515,7 @@ class MainActivity : ComponentActivity() {
                                 key = activeStream!!.key,
                                 headers = activeStream!!.headers,
                                 settingsManager = settingsManager,
+                                isLiveStream = activeStream!!.isLiveStream, // Parameter supplied correctly
                                 onBack = { activeStream = null }
                             )
                         }

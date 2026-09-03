@@ -183,7 +183,7 @@ object UnifiedSearchManager {
                     }
                 }
 
-                val concurrencyLimit = appPrefs.getInt("unified_search_concurrency_limit", 1)
+                val concurrencyLimit = appPrefs.getInt("unified_search_concurrency_limit", 5)
                 val searchConcurrencyLimit = Semaphore(concurrencyLimit)
 
                 coroutineScope {

@@ -98,6 +98,10 @@ class SettingsManager(context: Context) {
         get() = prefs.getString("active_profile_id", "default") ?: "default"
         set(value) = prefs.edit().putString("active_profile_id", value).apply()
 
+    var decoderMode: String
+        get() = prefs.getString("decoder_mode", "auto") ?: "auto"
+        set(value) = prefs.edit().putString("decoder_mode", value).apply()
+
     fun getProfiles(): List<AggregatorProfile> {
         return try {
             val json = prefs.getString("aggregator_profiles", null) ?: return listOf(AggregatorProfile("default", "Default Profile (All Sources)", true, emptyList(), emptyList()))

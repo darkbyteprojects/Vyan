@@ -5,6 +5,7 @@ import android.util.Base64
 import androidx.media3.common.C
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLDecoder
 import java.util.UUID
 
 data class NormalizedStream(
@@ -25,7 +26,14 @@ object StreamFormatNormalizer {
     private const val IPTV_DEFAULT_UA = "ExoPlayer/2.18.1 (Linux;Android 12) ExoPlayerLib/2.18.1"
 
     fun normalize(
-        url: String, keyId: String, key: String, cookie: String, userAgent: String, baseHeaders: Map<String, String>
+        url: String,
+        keyId: String,
+        key: String,
+        cookie: String,
+        userAgent: String,
+        baseHeaders: Map<String, String>,
+        bypassProxy: Boolean = false,
+        forceDomainHeaders: Boolean = false
     ): NormalizedStream {
         val streamHeaders = mutableMapOf<String, String>()
 
@@ -47,19 +55,34 @@ object StreamFormatNormalizer {
                 if (kv.size == 2) {
                     val k = kv[0].trim().lowercase()
                     val rawV = kv[1].trim()
-                    val v = if (k == "cookie") rawV else Uri.decode(rawV)
+
+                    // 1. Sanitize and decode the value thoroughly
+                    var v = Uri.decode(rawV)
+                    if (v.contains("%")) {
+                        try { v = URLDecoder.decode(v, "UTF-8") } catch (_: Exception) {}
+                    }
+                    v = v.trim(' ', '|', '=')
+
+                    // 2. Strict Whitelist for Headers
                     when (k) {
-                        "cookie" -> if (extractedCookie.isBlank()) extractedCookie = v
+                        "cookie", "http-cookie" -> if (extractedCookie.isBlank()) extractedCookie = v
                         "user-agent", "http-user-agent" -> extractedUa = v
-                        "origin" -> streamHeaders["Origin"] = v
+                        "origin", "http-origin" -> streamHeaders["Origin"] = v
                         "referer", "http-referrer", "http-referer" -> streamHeaders["Referer"] = v
-                        else -> streamHeaders[kv[0].trim()] = v
+                        "accept" -> streamHeaders["Accept"] = v
+                        "authorization" -> streamHeaders["Authorization"] = v
+                        "key", "keyid", "kid", "licenseurl" -> {
+                            // These are M3uParser injected variables for DRM routing. DO NOT send as HTTP headers.
+                        }
+                        else -> {
+                            // Silently drop unrecognized variables (e.g., 'xxx') to prevent 403 CDN errors.
+                        }
                     }
                 }
             }
         }
 
-        streamHeaders["User-Agent"] = sanitizeUa(extractedUa, cleanUrl)
+        streamHeaders["User-Agent"] = sanitizeUa(extractedUa, cleanUrl, forceDomainHeaders)
         streamHeaders["Accept"] = "*/*"
         streamHeaders["Connection"] = "keep-alive"
 
@@ -67,22 +90,12 @@ object StreamFormatNormalizer {
             streamHeaders["Cookie"] = extractedCookie
         }
 
-        applyDomainSpoofing(cleanUrl, streamHeaders)
+        applyDomainSpoofing(cleanUrl, streamHeaders, forceDomainHeaders)
 
         val drmHeaders = mutableMapOf<String, String>().apply { putAll(streamHeaders) }
 
-        if (extractedCookie.isNotBlank()) {
-            val hdneaToken = extractedCookie.split(";").firstOrNull { it.contains("__hdnea__") }?.trim()
-            if (hdneaToken != null && !cleanUrl.contains("__hdnea__")) {
-                val sep = if (cleanUrl.contains("?")) "&" else "?"
-                cleanUrl = "$cleanUrl$sep$hdneaToken"
-            }
-            val hdntlToken = extractedCookie.split(";").firstOrNull { it.contains("hdntl=") }?.trim()
-            if (hdntlToken != null && !cleanUrl.contains("hdntl=") && cleanUrl.contains("hotstar.com", true)) {
-                val sep = if (cleanUrl.contains("?")) "&" else "?"
-                cleanUrl = "$cleanUrl$sep$hdntlToken"
-            }
-        }
+        // 3. Removed duplicate __hdnea__ / hdntl URL injection entirely.
+        // Token auth is handled properly via the extracted Cookie header.
 
         var activeKid = keyId.trim()
         var activeK = key.trim()
@@ -102,38 +115,26 @@ object StreamFormatNormalizer {
         var drmScheme: UUID? = null
 
         if (activeKid.isNotBlank() && activeK.isNotBlank() && !activeKid.startsWith("http", true)) {
-            drmScheme = C.CLEARKEY_UUID
-            localJwk = try {
-                val kidBytes = hexToBytes(activeKid)
-                val keyBytes = hexToBytes(activeK)
+            val b64Kid = toBase64Url(activeKid)
+            val b64Key = toBase64Url(activeK)
 
-                // Strict Base64URL encoding without padding
-                val kidB64 = Base64.encodeToString(kidBytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-                val keyB64 = Base64.encodeToString(keyBytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-
-                // Constructing the exact JSON structure expected by ExoPlayer ClearKey
-                val jwkObject = JSONObject().apply {
-                    put("kty", "oct")
-                    put("kid", kidB64)
-                    put("k", keyB64)
-                }
-
-                JSONObject().apply {
-                    put("keys", JSONArray().put(jwkObject))
+            if (b64Kid != null && b64Key != null) {
+                drmScheme = C.CLEARKEY_UUID
+                localJwk = JSONObject().apply {
+                    put("keys", JSONArray().put(JSONObject().apply {
+                        put("kty", "oct")
+                        put("kid", b64Kid)
+                        put("k", b64Key)
+                    }))
+                    put("type", "temporary")
                 }.toString()
-            } catch (e: Exception) {
-                null
             }
         } else if (activeKid.isNotBlank() && activeKid.startsWith("http", true)) {
             proxyDrmUrl = LocalStreamProxy.createProxyLicenseUrl(activeKid, drmHeaders, "UNI")
             drmScheme = if (cleanUrl.contains("sunnxt") || cleanUrl.contains("tataplay")) C.CLEARKEY_UUID else C.WIDEVINE_UUID
-        } else if (activeKid.isNotBlank() && activeKid.contains(":")) {
-            proxyDrmUrl = LocalStreamProxy.createProxyLicenseUrl(activeKid, drmHeaders, "UNI")
-            drmScheme = C.CLEARKEY_UUID
         }
 
-        // Bypass local proxy for MPD and ClearKey streams to prevent chunk modification
-        val finalStreamUrl = if (cleanUrl.contains(".mpd", true) || localJwk != null) {
+        val finalStreamUrl = if (bypassProxy) {
             cleanUrl
         } else {
             LocalStreamProxy.createProxyUrl(cleanUrl, streamHeaders, "UNI")
@@ -150,6 +151,23 @@ object StreamFormatNormalizer {
         )
     }
 
+    private fun toBase64Url(input: String): String? {
+        val clean = input.replace("-", "").replace(" ", "").replace("\"", "").replace("'", "").trim()
+        if (clean.isBlank()) return null
+        return try {
+            if (clean.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } && clean.length % 2 == 0) {
+                val bytes = ByteArray(clean.length / 2)
+                for (i in bytes.indices) {
+                    bytes[i] = ((Character.digit(clean[i * 2], 16) shl 4) + Character.digit(clean[i * 2 + 1], 16)).toByte()
+                }
+                Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+            } else {
+                val bytes = try { Base64.decode(clean, Base64.URL_SAFE or Base64.NO_WRAP) } catch (_: Exception) { Base64.decode(clean, Base64.DEFAULT) }
+                Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+            }
+        } catch (_: Exception) { null }
+    }
+
     private fun mimeTypeFor(url: String): String {
         val lower = url.lowercase()
         return when {
@@ -162,17 +180,18 @@ object StreamFormatNormalizer {
         }
     }
 
-    private fun sanitizeUa(ua: String, url: String): String {
+    private fun sanitizeUa(ua: String, url: String, force: Boolean = false): String {
         val lowerUa = ua.lowercase()
         val lowerUrl = url.lowercase()
+        val isJunkUa = ua.isBlank() || lowerUa.contains("sayan10") || lowerUa.contains("ott navigator")
 
         val isJio = lowerUrl.contains("jio")
         if (isJio) {
-            return if (lowerUrl.contains("_mob")) JIO_MOBILE_UA else JIO_STB_UA
+            return if (!force && !isJunkUa) ua
+            else if (lowerUrl.contains("_mob")) JIO_MOBILE_UA else JIO_STB_UA
         }
 
-        // FIX: Honor the playlist's provided user-agent for Hotstar/SonyLiv instead of forcing desktop browser UA
-        if (ua.isNotBlank() && !lowerUa.contains("sayan10") && !lowerUa.contains("ott navigator")) {
+        if (!force && ua.isNotBlank() && !isJunkUa) {
             return ua
         }
 
@@ -180,38 +199,45 @@ object StreamFormatNormalizer {
             return GENERIC_BROWSER_UA
         }
 
-        if (ua.isBlank() || lowerUa.contains("sayan10") || lowerUa.contains("ott navigator")) return IPTV_DEFAULT_UA
-        return ua
-    }
-    private fun applyDomainSpoofing(url: String, headers: MutableMap<String, String>) {
-        val lowerUrl = url.lowercase()
-        if (lowerUrl.contains("jio")) {
-            headers["Origin"] = "https://www.jiotv.com"
-            headers["Referer"] = "https://www.jiotv.com/"
-        } else if (lowerUrl.contains("sonyliv")) {
-            headers["Origin"] = "https://www.sonyliv.com"
-            headers["Referer"] = "https://www.sonyliv.com/"
-        } else if (lowerUrl.contains("fancode")) {
-            headers["Origin"] = "https://www.fancode.com"
-            headers["Referer"] = "https://www.fancode.com/"
-        } else if (lowerUrl.contains("tataplay")) {
-            headers["Origin"] = "https://watch.tataplay.com"
-            headers["Referer"] = "https://watch.tataplay.com/"
-        } else if (lowerUrl.contains("yupp") || lowerUrl.contains("yupptv")) {
-            headers.putIfAbsent("Origin", "https://www.yupptv.com")
-            headers.putIfAbsent("Referer", "https://www.yupptv.com/")
-        } else if (lowerUrl.contains("hotstar")) {
-            headers["Origin"] = "https://www.hotstar.com"
-            headers["Referer"] = "https://www.hotstar.com/"
-        }
+        return if (isJunkUa || force) IPTV_DEFAULT_UA else ua
     }
 
-    private fun hexToBytes(hex: String): ByteArray {
-        val clean = hex.trim()
-        val bytes = ByteArray(clean.length / 2)
-        for (i in bytes.indices) {
-            bytes[i] = ((Character.digit(clean[i * 2], 16) shl 4) + Character.digit(clean[i * 2 + 1], 16)).toByte()
+    private fun applyDomainSpoofing(url: String, headers: MutableMap<String, String>, force: Boolean = false) {
+        val lowerUrl = url.lowercase()
+
+        fun set(key: String, value: String) {
+            if (force) headers[key] = value else headers.putIfAbsent(key, value)
         }
-        return bytes
+
+        if (lowerUrl.contains("jio")) {
+            set("Origin", "https://www.jiotv.com")
+            set("Referer", "https://www.jiotv.com/")
+        } else if (lowerUrl.contains("sonyliv")) {
+            set("Origin", "https://www.sonyliv.com")
+            set("Referer", "https://www.sonyliv.com/")
+        } else if (lowerUrl.contains("fancode")) {
+            set("Origin", "https://www.fancode.com")
+            set("Referer", "https://www.fancode.com/")
+        } else if (lowerUrl.contains("tataplay")) {
+            set("Origin", "https://watch.tataplay.com")
+            set("Referer", "https://watch.tataplay.com/")
+        } else if (lowerUrl.contains("yupp") || lowerUrl.contains("yupptv")) {
+            set("Origin", "https://www.yupptv.com")
+            set("Referer", "https://www.yupptv.com/")
+        } else if (lowerUrl.contains("hotstar")) {
+            set("Origin", "https://www.hotstar.com")
+            set("Referer", "https://www.hotstar.com/")
+        } else {
+            try {
+                val uri = java.net.URI(url)
+                val host = uri.host
+                val scheme = uri.scheme ?: "https"
+                if (!host.isNullOrBlank()) {
+                    val rootOrigin = "$scheme://$host"
+                    set("Origin", rootOrigin)
+                    set("Referer", "$rootOrigin/")
+                }
+            } catch (_: Exception) {}
+        }
     }
 }

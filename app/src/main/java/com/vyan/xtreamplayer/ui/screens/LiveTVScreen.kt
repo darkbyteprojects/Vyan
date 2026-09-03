@@ -48,9 +48,9 @@ import com.vyan.xtreamplayer.data.managers.SettingsManager
 import com.vyan.xtreamplayer.data.managers.UserCustomCategory
 import com.vyan.xtreamplayer.network.XtreamApi
 import com.vyan.xtreamplayer.utils.M3uParser
+import com.vyan.xtreamplayer.utils.NetworkClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
 import okhttp3.Request
 
 val PremiumCardGradients = listOf(
@@ -237,7 +237,7 @@ fun LiveTVScreen(
                         val response = XtreamApi.service.getLiveCategories(XtreamApi.formatApiUrl(activeAccount.url), activeAccount.username, activeAccount.pass)
                         if (response.isSuccessful && response.body() != null) { categories = response.body()!!; DataCache.liveCategories[cacheKey] = categories }
                     } else {
-                        val content = if (activeAccount.type == AccountType.M3U_URL) { OkHttpClient().newCall(Request.Builder().url(activeAccount.url).build()).execute().body?.string() ?: "" } else { context.contentResolver.openInputStream(Uri.parse(activeAccount.localFilePath))?.bufferedReader()?.use { it.readText() } ?: "" }
+                        val content = if (activeAccount.type == AccountType.M3U_URL) { NetworkClient.defaultClient.newCall(Request.Builder().url(activeAccount.url).build()).execute().body?.string() ?: "" } else { context.contentResolver.openInputStream(Uri.parse(activeAccount.localFilePath))?.bufferedReader()?.use { it.readText() } ?: "" }
                         val parsedChannels = M3uParser.parse(content)
                         val uniqueGroups = parsedChannels.map { it.group.ifEmpty { "Uncategorized" } }.distinct()
                         val mappedCategories = uniqueGroups.map {
@@ -247,8 +247,12 @@ fun LiveTVScreen(
                         DataCache.liveCategories[cacheKey] = mappedCategories
                         val channelsByGroup = parsedChannels.groupBy { it.group.ifEmpty { "Uncategorized" } }
                         channelsByGroup.forEach { (groupId, m3uChannels) -> DataCache.liveChannels["${activeAccount.id}_$groupId"] = m3uChannels.map {
+
+                            // FIX BUG 5: Safer stream_id hash to prevent collision drops in UI loops
+                            val uniqueHashId = ("${it.url}_${it.name}").hashCode()
+
                             LiveChannel(
-                                num = 0, name = it.name, stream_type = "live", stream_id = it.url.hashCode(),
+                                num = 0, name = it.name, stream_type = "live", stream_id = uniqueHashId,
                                 stream_icon = it.logo, epg_channel_id = it.tvgId, added = "", category_id = groupId,
                                 custom_sid = "", tv_archive = 0, direct_source = it.url, tv_archive_duration = 0
                             )
