@@ -1,7 +1,4 @@
-@file:OptIn(
-    ExperimentalMaterial3Api::class,
-    UnstableApi::class
-)
+@file:OptIn(androidx.media3.common.util.UnstableApi::class)
 
 package com.vyan.xtreamplayer.ui.screens
 
@@ -10,7 +7,6 @@ import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
-import android.net.Uri
 import android.os.Build
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -49,39 +45,24 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource.HttpDataSourceException
 import androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException
-import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
-import androidx.media3.exoplayer.drm.FrameworkMediaDrm
-import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
-import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.vyan.xtreamplayer.data.managers.SettingsManager
-import com.vyan.xtreamplayer.utils.NetworkClient
-import com.vyan.xtreamplayer.utils.StreamFormatNormalizer
+import com.vyan.xtreamplayer.stream.DirectMethod
+import com.vyan.xtreamplayer.stream.ProxyMethod
+import com.vyan.xtreamplayer.stream.WebMethod
+import com.vyan.xtreamplayer.stream.PlaybackMethod
+import com.vyan.xtreamplayer.stream.StreamProfile
 import kotlinx.coroutines.delay
-
-data class PickerSourceItem(
-    val title: String,
-    val subtitle: String,
-    val typeTag: String,
-    val isSelected: Boolean,
-    val onClick: () -> Unit
-)
 
 fun getQualityTag(height: Int): String {
     return when {
@@ -110,28 +91,16 @@ fun QualityBoxBadge(tag: String) {
             .padding(horizontal = 6.dp, vertical = 2.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = tag,
-            color = Color.White,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Black
-        )
+        Text(text = tag, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black)
     }
 }
 
 @SuppressLint("UnsafeOptInUsageError")
 @Composable
 fun PlayerScreen(
-    streamUrl: String,
+    initialProfile: StreamProfile,
     title: String,
-    sources: List<AggregatedChannel> = emptyList(),
-    unifiedSources: List<UnifiedSource> = emptyList(),
     isLiveStream: Boolean = true,
-    userAgent: String = "",
-    cookie: String = "",
-    keyId: String = "",
-    key: String = "",
-    headers: Map<String, String> = emptyMap(),
     settingsManager: SettingsManager? = null,
     onBack: () -> Unit
 ) {
@@ -139,63 +108,33 @@ fun PlayerScreen(
     val activity = context as? Activity
     val isPreview = LocalInspectionMode.current
 
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumTextSec = Color(0xFFA1A1AA)
+    val premiumBg = Color.Black
+    val premiumSurface = Color(0xFF121212)
+    val premiumAccent = Color.White
+    val premiumTextSec = Color(0xFFAAAAAA)
+    val premiumRed = Color(0xFFE50914)
 
-    var currentSourceIndex by remember { mutableIntStateOf(0) }
-    var forceKnownHeaders by remember { mutableStateOf(false) }
-    var retryTrigger by remember { mutableIntStateOf(0) }
-
-    var currentUrl by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].streamUrl else if (sources.isNotEmpty()) sources[0].streamUrl else streamUrl) }
-    var currentUa by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].userAgent else userAgent) }
-    var currentCookie by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].cookie else cookie) }
-    var currentKeyId by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].keyId else keyId) }
-    var currentKey by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].key else key) }
-    var currentHeaders by remember { mutableStateOf(if (unifiedSources.isNotEmpty()) unifiedSources[0].headers else headers) }
-
-    var isError by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var profile by remember { mutableStateOf(initialProfile) }
     var isLoading by remember { mutableStateOf(true) }
-    var watchdogMessage by remember { mutableStateOf<String?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    var areControlsVisible by remember { mutableStateOf(true) }
     var isPlaying by remember { mutableStateOf(true) }
     var currentPositionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
-    var areControlsVisible by remember { mutableStateOf(true) }
+    var isLiveWindow by remember { mutableStateOf(isLiveStream) }
     var currentVideoHeight by remember { mutableIntStateOf(0) }
     var selectedQualityKey by remember { mutableStateOf("auto") }
+    var currentResizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
 
-    var showSourcePickerModal by remember { mutableStateOf(false) }
     var showQualityPickerModal by remember { mutableStateOf(false) }
     var showResizeDialog by remember { mutableStateOf(false) }
     var showTrackSelectionDialog by remember { mutableStateOf(false) }
     var showHamburgerMenu by remember { mutableStateOf(false) }
-    var currentResizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
-
-    var openedAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var lastPositionMs by remember { mutableLongStateOf(0L) }
-    var lastPositionChangeAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var bufferingSince by remember { mutableStateOf<Long?>(null) }
-
-    var hasRenderedFirstFrame by remember { mutableStateOf(false) }
-    val activeDecoderMode = remember { settingsManager?.decoderMode ?: "auto" }
-
-    var isLiveWindow by remember { mutableStateOf(isLiveStream) }
-
-    BackHandler {
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        onBack()
-    }
-
-    DisposableEffect(Unit) {
-        val window = activity?.window
-        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
-    }
 
     val trackSelector = remember { if (isPreview) null else DefaultTrackSelector(context) }
+    val activeDecoderMode = remember { settingsManager?.decoderMode ?: "auto" }
 
-    // ExoPlayer is properly guarded by remember and initialized once per composition scope
     val exoPlayer = remember {
         if (isPreview) null else {
             val extensionMode = when (activeDecoderMode) {
@@ -204,7 +143,6 @@ fun PlayerScreen(
                 "hardware" -> androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
                 else -> androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
             }
-
             val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(context)
                 .setExtensionRendererMode(extensionMode)
                 .setEnableDecoderFallback(true)
@@ -215,174 +153,43 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(currentUrl, currentUa, currentCookie, currentKeyId, currentKey, currentHeaders, currentSourceIndex, forceKnownHeaders, retryTrigger) {
-        if (isPreview) return@LaunchedEffect
-        isLoading = true; isError = false; watchdogMessage = null; hasRenderedFirstFrame = false
-        openedAt = System.currentTimeMillis(); lastPositionMs = 0L; lastPositionChangeAt = System.currentTimeMillis()
-        bufferingSince = null
+    BackHandler {
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        onBack()
+    }
+
+    DisposableEffect(Unit) {
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            exoPlayer?.release()
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    LaunchedEffect(profile) {
+        if (isPreview || exoPlayer == null) return@LaunchedEffect
+        isLoading = true
+        errorMessage = null
 
         try {
-            var actualUrlToPlay = currentUrl
-            val isSportsMode = currentUrl.contains("||")
-
-            if (isSportsMode) {
-                val slug = currentUrl.substringBefore("||")
-                val fallbackLink = currentUrl.substringAfter("||", "")
-
-                if (!slug.startsWith("http", ignoreCase = true) && slug.isNotBlank()) {
-                    watchdogMessage = "Fetching secure stream..."
-                    val links = com.vyan.xtreamplayer.sports.SportsEngine.getStreamLinks(slug)
-
-                    actualUrlToPlay = if (links.isNotEmpty()) {
-                        links.first().url
-                    } else if (fallbackLink.isNotBlank()) {
-                        fallbackLink
-                    } else {
-                        throw Exception("Match has not started yet or stream is unavailable.")
-                    }
-                } else if (fallbackLink.isNotBlank()) {
-                    actualUrlToPlay = fallbackLink
-                }
+            val workingProfile = if (profile.method == PlaybackMethod.WEB_RESOLVER) {
+                WebMethod.resolve(context, profile)
+            } else {
+                profile
             }
 
-            val urlWithoutHeaders = if (actualUrlToPlay.contains("?|")) actualUrlToPlay.substringBefore("?|") else actualUrlToPlay.substringBefore("|")
-            val extractedHeaders = mutableMapOf<String, String>()
-            var parsedKey = currentKey
-            var parsedKeyId = currentKeyId
-            var parsedLicenseUrl = ""
-
-            val pipePart = if (actualUrlToPlay.contains("?|")) actualUrlToPlay.substringAfter("?|") else if (actualUrlToPlay.contains("|")) actualUrlToPlay.substringAfter("|") else ""
-            if (pipePart.isNotBlank()) {
-                val headerParams = pipePart.split("&")
-                headerParams.forEach { param ->
-                    val kv = param.split("=", limit = 2)
-                    if (kv.size == 2) {
-                        val keyParam = kv[0].trim().lowercase()
-                        val value = Uri.decode(kv[1].trim())
-                        when (keyParam) {
-                            "cookie" -> extractedHeaders["Cookie"] = value
-                            "origin" -> extractedHeaders["Origin"] = value
-                            "user-agent" -> extractedHeaders["User-Agent"] = value
-                            "referer", "referrer" -> extractedHeaders["Referer"] = value
-                            "key" -> parsedKey = value
-                            "keyid", "kid" -> parsedKeyId = value
-                            "licenseurl" -> parsedLicenseUrl = value
-                            else -> extractedHeaders[kv[0].trim()] = value
-                        }
-                    }
-                }
+            val mediaSource = when (workingProfile.method) {
+                PlaybackMethod.LOCAL_PROXY -> ProxyMethod.buildMediaSource(context, workingProfile)
+                else -> DirectMethod.buildMediaSource(context, workingProfile)
             }
 
-            if (!com.vyan.xtreamplayer.utils.StreamResolver.isDirectStream(urlWithoutHeaders)) {
-                watchdogMessage = "Bypassing web player..."
-                val resolved = com.vyan.xtreamplayer.utils.StreamResolver.resolveEmbedUrl(context, urlWithoutHeaders)
-                if (resolved != null) {
-                    actualUrlToPlay = resolved
-                } else {
-                    throw Exception("Failed to extract video stream from web player.")
-                }
-            }
-
-            watchdogMessage = null
-
-            var safeUserAgent = extractedHeaders["User-Agent"] ?: currentUa
-            if (safeUserAgent.isBlank() || safeUserAgent.contains("ExoPlayer")) {
-                safeUserAgent = "Mozilla/5.0 (Windows NT 10.0; rv:78.0) Gecko/20100101 Firefox/78.0"
-                extractedHeaders["User-Agent"] = safeUserAgent
-            }
-
-            val combinedHeaders = currentHeaders.toMutableMap()
-            combinedHeaders.putAll(extractedHeaders)
-
-            val cleanStreamUrl = if (actualUrlToPlay.contains("?|")) actualUrlToPlay.substringBefore("?|") else if (actualUrlToPlay.contains("|")) actualUrlToPlay.substringBefore("|") else actualUrlToPlay
-
-            val streamConfig = StreamFormatNormalizer.normalize(
-                url = cleanStreamUrl,
-                keyId = parsedKeyId,
-                key = parsedKey,
-                cookie = extractedHeaders["Cookie"] ?: currentCookie,
-                userAgent = safeUserAgent,
-                baseHeaders = combinedHeaders,
-                bypassProxy = true,
-                forceDomainHeaders = forceKnownHeaders
-            )
-
-            val resolvedUa = streamConfig.headers["User-Agent"] ?: "ExoPlayer/2.18.1 (Linux;Android 12) ExoPlayerLib/2.18.1"
-
-            // Use DefaultHttpDataSource.Factory instead of OkHttp to natively persist cookies across redirects
-            val defaultHttpDataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-                .setUserAgent(resolvedUa)
-                .setDefaultRequestProperties(streamConfig.headers)
-                .setAllowCrossProtocolRedirects(true)
-
-            val defaultDataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(
-                context,
-                defaultHttpDataSourceFactory
-            )
-
-            // 3. Prevent the player from giving up easily on 400/403 chunk errors
-            val loadErrorPolicy = DefaultLoadErrorHandlingPolicy(5)
-
-            // 4. Build the MediaSource
-            val mediaSourceFactory = DefaultMediaSourceFactory(context)
-                .setDataSourceFactory(defaultDataSourceFactory)
-                .setLoadErrorHandlingPolicy(loadErrorPolicy)
-
-            val lowerUrl = cleanStreamUrl.lowercase()
-            val detectedMimeType = when {
-                lowerUrl.contains(".m3u8") -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
-                lowerUrl.contains(".mpd") -> androidx.media3.common.MimeTypes.APPLICATION_MPD
-                lowerUrl.contains(".mkv") -> androidx.media3.common.MimeTypes.VIDEO_MATROSKA
-                lowerUrl.contains(".mp4") -> androidx.media3.common.MimeTypes.VIDEO_MP4
-                lowerUrl.contains(".ts") -> androidx.media3.common.MimeTypes.VIDEO_MP2T
-                else -> streamConfig.mimeType
-            }
-
-            val mediaItemBuilder = MediaItem.Builder()
-                .setUri(Uri.parse(streamConfig.proxyStreamUrl))
-                .setMimeType(detectedMimeType)
-
-            // 5. Apply DRM configs (if any)
-            if (parsedLicenseUrl.isNotBlank()) {
-                mediaItemBuilder.setDrmConfiguration(
-                    MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)
-                        .setLicenseUri(parsedLicenseUrl)
-                        .setMultiSession(true)
-                        .setLicenseRequestHeaders(combinedHeaders)
-                        .build()
-                )
-            } else if (streamConfig.drmScheme != null) {
-                if (streamConfig.localJwk != null) {
-                    val jwkBytes = streamConfig.localJwk.toByteArray(Charsets.UTF_8)
-                    val clearKeyDrmManager = DefaultDrmSessionManager.Builder()
-                        .setMultiSession(true)
-                        .setUuidAndExoMediaDrmProvider(streamConfig.drmScheme, FrameworkMediaDrm.DEFAULT_PROVIDER)
-                        .build(LocalMediaDrmCallback(jwkBytes))
-                    mediaSourceFactory.setDrmSessionManagerProvider { clearKeyDrmManager }
-                    mediaItemBuilder.setDrmConfiguration(
-                        MediaItem.DrmConfiguration.Builder(streamConfig.drmScheme).build()
-                    )
-                } else if (streamConfig.proxyDrmLicenseUrl != null) {
-                    val activeDrmHeaders = streamConfig.drmHeaders ?: streamConfig.headers
-                    mediaItemBuilder.setDrmConfiguration(
-                        MediaItem.DrmConfiguration.Builder(streamConfig.drmScheme)
-                            .setLicenseUri(streamConfig.proxyDrmLicenseUrl)
-                            .setMultiSession(true)
-                            .setLicenseRequestHeaders(activeDrmHeaders)
-                            .build()
-                    )
-                }
-            }
-
-            val mediaSource = mediaSourceFactory.createMediaSource(mediaItemBuilder.build())
-            exoPlayer?.setMediaSource(mediaSource)
-            exoPlayer?.prepare()
-            exoPlayer?.playWhenReady = true
-
+            exoPlayer.setMediaSource(mediaSource)
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
         } catch (e: Exception) {
             isLoading = false
-            isError = true
-            errorMessage = e.message ?: "Failed to initialize player"
+            errorMessage = e.localizedMessage ?: "Failed to load stream"
         }
     }
 
@@ -390,10 +197,7 @@ fun PlayerScreen(
         if (exoPlayer == null) return@DisposableEffect onDispose { }
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
-                if (!hasRenderedFirstFrame) hasRenderedFirstFrame = true
-                if (isLoading) isLoading = false
-                if (isError) isError = false
-                if (watchdogMessage != null) watchdogMessage = null
+                isLoading = false
             }
 
             override fun onEvents(player: Player, events: Player.Events) {
@@ -406,184 +210,42 @@ fun PlayerScreen(
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 when (playbackState) {
-                    Player.STATE_BUFFERING -> {
-                        if (!isLoading) isLoading = true
-                        if (bufferingSince == null) bufferingSince = System.currentTimeMillis()
-                    }
+                    Player.STATE_BUFFERING -> isLoading = true
                     Player.STATE_READY -> {
-                        if (bufferingSince != null) bufferingSince = null
-                        if (isLoading && (hasRenderedFirstFrame || currentVideoHeight > 0)) {
-                            isLoading = false
-                        }
-                        if (isError) isError = false
-
+                        isLoading = false
                         val newDuration = exoPlayer.duration
-                        val safeDuration = if (newDuration == C.TIME_UNSET) 0L else newDuration
-                        if (durationMs != safeDuration) durationMs = safeDuration
+                        durationMs = if (newDuration == C.TIME_UNSET) 0L else newDuration
                     }
-                    Player.STATE_ENDED -> {
-                        if (isLoading) isLoading = false
-                    }
+                    Player.STATE_ENDED -> isLoading = false
                 }
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
-                if (isPlaying != playing) isPlaying = playing
+                isPlaying = playing
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
-                if (videoSize.height > 0 && currentVideoHeight != videoSize.height) {
+                if (videoSize.height > 0) {
                     currentVideoHeight = videoSize.height
-                    if (!hasRenderedFirstFrame) hasRenderedFirstFrame = true
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                isLoading = false
                 val cause = error.cause
-                val rejectionCode = (cause as? InvalidResponseCodeException)?.responseCode
+                val isDecoderCrash = cause?.toString()?.contains("MediaCodec") == true || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED
 
-                if (!forceKnownHeaders && (rejectionCode == 401 || rejectionCode == 403 || rejectionCode == 404)) {
-                    forceKnownHeaders = true
-                    watchdogMessage = "HTTP $rejectionCode. Retrying with default headers..."
-                    return
-                }
-
-                forceKnownHeaders = false
-                hasRenderedFirstFrame = false
-
-                val actualTotalSources = maxOf(1, if (unifiedSources.isNotEmpty()) unifiedSources.size else sources.size)
-
-                if (actualTotalSources > 1 && currentSourceIndex < actualTotalSources - 1) {
-                    currentSourceIndex++
-                    if (unifiedSources.isNotEmpty()) {
-                        val next = unifiedSources[currentSourceIndex]
-                        currentUrl = next.streamUrl
-                        currentUa = next.userAgent
-                        currentCookie = next.cookie
-                        currentKeyId = next.keyId
-                        currentKey = next.key
-                        currentHeaders = next.headers
-                    } else if (sources.isNotEmpty()) {
-                        currentUrl = sources[currentSourceIndex].streamUrl
-                    }
-                    watchdogMessage = "Stream error. Switching to source ${currentSourceIndex + 1}..."
-                } else {
-                    isLoading = false
-                    isError = true
-                    errorMessage = when {
-                        error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> "Stream blocked. Server returned HTML instead of video."
-                        cause is InvalidResponseCodeException -> "HTTP ${cause.responseCode}: CDN Rejected Request."
-                        cause is HttpDataSourceException -> "Network Connection Failed. Stream offline."
-                        else -> "Playback Error: ${error.errorCodeName}"
-                    }
+                errorMessage = when {
+                    isDecoderCrash -> "Codec Error: Stream blocked or format unsupported."
+                    error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> "Stream blocked. Server returned HTML instead of video."
+                    cause is InvalidResponseCodeException -> "HTTP ${cause.responseCode}: CDN Rejected Request."
+                    cause is HttpDataSourceException -> "Network Connection Failed. Stream offline."
+                    else -> "Playback Error: ${error.errorCodeName}"
                 }
             }
         }
         exoPlayer.addListener(listener)
-        onDispose {
-            // Player release is only triggered when PlayerScreen leaves the composition permanently (popped off stack)
-            exoPlayer.removeListener(listener)
-            exoPlayer.release()
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
-    }
-
-    LaunchedEffect(exoPlayer, currentSourceIndex, unifiedSources.size, sources.size, isLiveWindow) {
-        if (exoPlayer == null) return@LaunchedEffect
-        while (true) {
-            delay(1000)
-            val now = System.currentTimeMillis()
-            val currentPos = exoPlayer.currentPosition
-            val isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING
-            val isReady = exoPlayer.playbackState == Player.STATE_READY
-            val isCurrentlyPlaying = exoPlayer.isPlaying
-
-            if (currentPos != lastPositionMs && !isBuffering) {
-                lastPositionMs = currentPos
-                lastPositionChangeAt = now
-                if (hasRenderedFirstFrame && watchdogMessage != null) watchdogMessage = null
-            } else if (isCurrentlyPlaying) {
-                if (now - lastPositionChangeAt > 1000) {
-                    lastPositionChangeAt = now
-                }
-            }
-
-            var needsFailover = false
-            var reason = ""
-
-            val isVideoExpected = exoPlayer.currentTracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
-            // Bumped threshold to 15 seconds to prevent false-positive failures on slow initial manifests
-            if (isReady && isVideoExpected && !hasRenderedFirstFrame && (now - openedAt > 15000)) {
-                needsFailover = true
-                reason = "Video decode stalled"
-            } else if (isBuffering && bufferingSince != null && (now - bufferingSince!! > 15000)) {
-                needsFailover = true
-                reason = "Buffering timeout"
-            } else if (!isLiveWindow && isCurrentlyPlaying && !isBuffering && lastPositionMs > 0 && (now - lastPositionChangeAt > 10000)) {
-                needsFailover = true
-                reason = "Stream frozen"
-            } else if (lastPositionMs == 0L && !isCurrentlyPlaying && (now - openedAt > 20000)) {
-                needsFailover = true
-                reason = "Connection dropped"
-            } else if (isError) {
-                needsFailover = true
-                reason = "Stream error"
-            }
-
-            val actualTotalSources = maxOf(1, if (unifiedSources.isNotEmpty()) unifiedSources.size else sources.size)
-
-            if (needsFailover && actualTotalSources > 0) {
-                hasRenderedFirstFrame = false
-                forceKnownHeaders = false
-
-                if (actualTotalSources > 1 && currentSourceIndex < actualTotalSources - 1) {
-                    currentSourceIndex++
-                    watchdogMessage = "$reason. Switching to Source ${currentSourceIndex + 1}..."
-
-                    if (unifiedSources.isNotEmpty()) {
-                        val next = unifiedSources[currentSourceIndex]
-                        currentUrl = next.streamUrl
-                        currentUa = next.userAgent
-                        currentCookie = next.cookie
-                        currentKeyId = next.keyId
-                        currentKey = next.key
-                        currentHeaders = next.headers
-                    } else if (sources.isNotEmpty()) {
-                        currentUrl = sources[currentSourceIndex].streamUrl
-                    }
-                    delay(2000)
-                } else {
-                    if (unifiedSources.isNotEmpty() && com.vyan.xtreamplayer.ui.screens.UnifiedSearchManager.isSearching) {
-                        watchdogMessage = "Waiting for background search to find backups..."
-                        exoPlayer.pause()
-                    } else if (isLiveWindow) {
-                        currentSourceIndex = 0
-                        watchdogMessage = if (actualTotalSources > 1) "All sources failed. Restarting cycle..." else "Connection lost. Reconnecting..."
-
-                        if (actualTotalSources > 1) {
-                            if (unifiedSources.isNotEmpty()) {
-                                val next = unifiedSources[currentSourceIndex]
-                                currentUrl = next.streamUrl
-                                currentUa = next.userAgent
-                                currentCookie = next.cookie
-                                currentKeyId = next.keyId
-                                currentKey = next.key
-                                currentHeaders = next.headers
-                            } else if (sources.isNotEmpty()) {
-                                currentUrl = sources[currentSourceIndex].streamUrl
-                            }
-                        }
-
-                        delay(2000)
-                        retryTrigger++
-                    } else {
-                        watchdogMessage = "Stream offline. No backup sources available."
-                        exoPlayer.pause()
-                        isError = true
-                    }
-                }
-            }
-        }
+        onDispose { exoPlayer.removeListener(listener) }
     }
 
     LaunchedEffect(exoPlayer) {
@@ -599,21 +261,23 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(areControlsVisible, showSourcePickerModal, showQualityPickerModal, showResizeDialog, showTrackSelectionDialog, showHamburgerMenu) {
-        if (areControlsVisible && !showSourcePickerModal && !showQualityPickerModal && !showResizeDialog && !showTrackSelectionDialog && !showHamburgerMenu) { delay(4500); areControlsVisible = false }
+    LaunchedEffect(areControlsVisible, showQualityPickerModal, showResizeDialog, showTrackSelectionDialog, showHamburgerMenu) {
+        if (areControlsVisible && !showQualityPickerModal && !showResizeDialog && !showTrackSelectionDialog && !showHamburgerMenu) {
+            delay(4500)
+            areControlsVisible = false
+        }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) { areControlsVisible = !areControlsVisible }
+            .background(premiumBg)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { areControlsVisible = !areControlsVisible }
     ) {
         if (isPreview || exoPlayer == null) {
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) { Icon(Icons.Default.PlayCircle, null, tint = Color.White.copy(alpha = 0.2f), modifier = Modifier.size(72.dp)) }
+            Box(modifier = Modifier.fillMaxSize().background(premiumBg), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.PlayCircle, null, tint = premiumAccent.copy(alpha = 0.2f), modifier = Modifier.size(72.dp))
+            }
         } else {
             AndroidView(
                 factory = { ctx ->
@@ -624,57 +288,40 @@ fun PlayerScreen(
                         layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     }
                 },
-                update = { view ->
-                    view.resizeMode = currentResizeMode
-                },
+                update = { view -> view.resizeMode = currentResizeMode },
                 modifier = Modifier.fillMaxSize()
             )
         }
 
-        if (isLoading || watchdogMessage != null) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(
-                    modifier = Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.8f)).padding(horizontal = 24.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(strokeWidth = 2.5.dp, color = premiumAccent, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(16.dp))
-                    }
-                    Text(watchdogMessage ?: "Buffering...", color = premiumAccent, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                }
+        if (isLoading && errorMessage == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = premiumRed, strokeWidth = 3.dp)
             }
         }
 
-        val totalSourcesCount = if (unifiedSources.isNotEmpty()) unifiedSources.size else sources.size
-        if (isError && totalSourcesCount <= 1 && !isLiveWindow) {
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.9f)), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 32.dp)) {
-                    Icon(Icons.Default.ErrorOutline, null, tint = Color(0xFFE50914), modifier = Modifier.size(64.dp))
+        if (errorMessage != null) {
+            Box(modifier = Modifier.fillMaxSize().background(premiumBg.copy(alpha = 0.9f)), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+                    Icon(Icons.Default.Error, null, tint = premiumRed, modifier = Modifier.size(64.dp))
                     Spacer(modifier = Modifier.height(16.dp))
                     Text("Playback Failed", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 20.sp)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(errorMessage ?: "Unknown error", color = premiumTextSec, fontSize = 14.sp, textAlign = TextAlign.Center)
-
+                    Text(errorMessage!!, color = premiumTextSec, fontSize = 14.sp, textAlign = TextAlign.Center)
                     Spacer(modifier = Modifier.height(24.dp))
-
                     Button(
-                        onClick = { retryTrigger++ },
-                        colors = ButtonDefaults.buttonColors(containerColor = premiumAccent, contentColor = Color.Black),
-                        shape = RoundedCornerShape(12.dp)
+                        onClick = { onBack() },
+                        colors = ButtonDefaults.buttonColors(containerColor = premiumAccent, contentColor = premiumBg),
+                        shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("Retry Connection", fontWeight = FontWeight.Bold)
+                        Text("Go Back", fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
 
-        AnimatedVisibility(visible = areControlsVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
+        AnimatedVisibility(visible = areControlsVisible && errorMessage == null, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.fillMaxSize()) {
-                Box(modifier = Modifier.fillMaxWidth().height(160.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent))))
+                Box(modifier = Modifier.fillMaxWidth().height(160.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(listOf(premiumBg.copy(alpha = 0.85f), Color.Transparent))))
 
                 Row(
                     modifier = Modifier
@@ -685,25 +332,12 @@ fun PlayerScreen(
                         .align(Alignment.TopCenter),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED; onBack() }, modifier = Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.1f)).size(48.dp)) {
+                    IconButton(onClick = { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED; onBack() }, modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(premiumSurface.copy(alpha = 0.8f)).size(48.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = premiumAccent)
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(title, color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (sources.isNotEmpty() && unifiedSources.isEmpty()) {
-                            Text("Source ${currentSourceIndex + 1} of ${sources.size}", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                        } else if (unifiedSources.isNotEmpty()) {
-                            val activeUnifiedSource = unifiedSources.find { it.streamUrl == currentUrl }?.sourceName ?: "Unknown Source"
-                            Text("Unified Mode • Source ${currentSourceIndex + 1} of ${unifiedSources.size} • $activeUnifiedSource", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-
-                    if (unifiedSources.isNotEmpty() || sources.isNotEmpty()) {
-                        Spacer(modifier = Modifier.width(16.dp))
-                        IconButton(onClick = { showSourcePickerModal = true }, modifier = Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.1f)).size(48.dp)) {
-                            Icon(Icons.Default.List, "Sources", tint = premiumAccent)
-                        }
                     }
                 }
 
@@ -717,14 +351,12 @@ fun PlayerScreen(
                             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                 IconButton(
                                     onClick = { exoPlayer?.let { it.seekTo((it.currentPosition - 10000).coerceAtLeast(0L)) } },
-                                    modifier = Modifier.size(56.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.4f))
+                                    modifier = Modifier.size(56.dp).clip(CircleShape).background(premiumBg.copy(alpha = 0.5f))
                                 ) {
-                                    Icon(Icons.Default.Replay10, contentDescription = "Rewind 10s", tint = Color.White, modifier = Modifier.size(32.dp))
+                                    Icon(Icons.Default.Replay10, contentDescription = "Rewind 10s", tint = premiumAccent, modifier = Modifier.size(32.dp))
                                 }
                             }
-                        } else {
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
+                        } else { Spacer(modifier = Modifier.weight(1f)) }
 
                         Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                             IconButton(
@@ -734,7 +366,7 @@ fun PlayerScreen(
                                 Icon(
                                     imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                     contentDescription = "Play/Pause",
-                                    tint = Color.Black,
+                                    tint = premiumBg,
                                     modifier = Modifier.size(42.dp)
                                 )
                             }
@@ -744,27 +376,25 @@ fun PlayerScreen(
                             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                 IconButton(
                                     onClick = { exoPlayer?.let { it.seekTo((it.currentPosition + 10000).coerceAtMost(durationMs)) } },
-                                    modifier = Modifier.size(56.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.4f))
+                                    modifier = Modifier.size(56.dp).clip(CircleShape).background(premiumBg.copy(alpha = 0.5f))
                                 ) {
-                                    Icon(Icons.Default.Forward10, contentDescription = "Forward 10s", tint = Color.White, modifier = Modifier.size(32.dp))
+                                    Icon(Icons.Default.Forward10, contentDescription = "Forward 10s", tint = premiumAccent, modifier = Modifier.size(32.dp))
                                 }
                             }
-                        } else {
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
+                        } else { Spacer(modifier = Modifier.weight(1f)) }
                     }
                 }
 
-                Box(modifier = Modifier.fillMaxWidth().height(220.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f)))))
+                Box(modifier = Modifier.fillMaxWidth().height(220.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(listOf(Color.Transparent, premiumBg.copy(alpha = 0.9f)))))
 
                 Column(modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 32.dp, vertical = 24.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         if (isLiveWindow) {
                             Spacer(modifier = Modifier.weight(1f))
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clip(CircleShape).background(Color(0xFFE50914).copy(alpha = 0.2f)).padding(horizontal = 12.dp, vertical = 6.dp)) {
-                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFE50914)))
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(premiumRed.copy(alpha = 0.2f)).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(premiumRed))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("LIVE", color = Color(0xFFE50914), fontSize = 13.sp, fontWeight = FontWeight.Black)
+                                Text("LIVE", color = premiumRed, fontSize = 13.sp, fontWeight = FontWeight.Black)
                             }
                         } else {
                             Text("${currentPositionMs / 60000}:${String.format("%02d", (currentPositionMs / 1000) % 60)}", color = premiumAccent, fontSize = 15.sp, fontWeight = FontWeight.Bold)
@@ -775,19 +405,13 @@ fun PlayerScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     if (isLiveWindow) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(4.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFE50914))
-                        )
+                        Box(modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(premiumRed))
                     } else {
                         Slider(
                             value = currentPositionMs.toFloat(),
                             onValueChange = { exoPlayer?.seekTo(it.toLong()) },
                             valueRange = 0f..(if(durationMs > 0) durationMs.toFloat() else 100f),
-                            colors = SliderDefaults.colors(thumbColor = premiumAccent, activeTrackColor = premiumAccent, inactiveTrackColor = Color.White.copy(alpha = 0.3f))
+                            colors = SliderDefaults.colors(thumbColor = premiumAccent, activeTrackColor = premiumAccent, inactiveTrackColor = premiumSurface)
                         )
                     }
 
@@ -796,7 +420,7 @@ fun PlayerScreen(
                     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                         Row(modifier = Modifier.align(Alignment.CenterStart), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Box {
-                                IconButton(onClick = { showHamburgerMenu = true }, modifier = Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.1f)).size(48.dp)) {
+                                IconButton(onClick = { showHamburgerMenu = true }, modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(premiumSurface.copy(alpha = 0.8f)).size(48.dp)) {
                                     Icon(Icons.Default.MoreVert, "More Options", tint = premiumAccent)
                                 }
                                 DropdownMenu(
@@ -821,8 +445,8 @@ fun PlayerScreen(
                             Box(
                                 modifier = Modifier
                                     .height(48.dp)
-                                    .clip(RoundedCornerShape(24.dp))
-                                    .background(Color.White.copy(alpha = 0.1f))
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(premiumSurface.copy(alpha = 0.8f))
                                     .clickable { showQualityPickerModal = true }
                                     .padding(horizontal = 12.dp),
                                 contentAlignment = Alignment.Center
@@ -835,10 +459,8 @@ fun PlayerScreen(
 
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 IconButton(
-                                    onClick = {
-                                        activity?.enterPictureInPictureMode(PictureInPictureParams.Builder().build())
-                                    },
-                                    modifier = Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.1f)).size(48.dp)
+                                    onClick = { activity?.enterPictureInPictureMode(PictureInPictureParams.Builder().build()) },
+                                    modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(premiumSurface.copy(alpha = 0.8f)).size(48.dp)
                                 ) {
                                     Icon(Icons.Default.PictureInPicture, "PiP", tint = premiumAccent)
                                 }
@@ -846,7 +468,9 @@ fun PlayerScreen(
                         }
 
                         Row(modifier = Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            IconButton(onClick = { activity?.requestedOrientation = if (activity?.requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }, modifier = Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.1f)).size(48.dp)) { Icon(Icons.Default.ScreenRotation, null, tint = premiumAccent) }
+                            IconButton(onClick = { activity?.requestedOrientation = if (activity?.requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }, modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(premiumSurface.copy(alpha = 0.8f)).size(48.dp)) {
+                                Icon(Icons.Default.ScreenRotation, null, tint = premiumAccent)
+                            }
                         }
                     }
                 }
@@ -854,246 +478,67 @@ fun PlayerScreen(
         }
     }
 
-    if (showQualityPickerModal) {
-        QualitySwitcherDialog(
-            exoPlayer = exoPlayer,
-            trackSelector = trackSelector,
-            selectedQualityKey = selectedQualityKey,
-            onQualitySelected = { key -> selectedQualityKey = key },
-            onDismiss = { showQualityPickerModal = false }
-        )
-    }
-
-    if (showResizeDialog) {
-        ResizeModeDialog(
-            currentResizeMode = currentResizeMode,
-            onDismiss = { showResizeDialog = false },
-            onResizeModeSelected = { mode ->
-                currentResizeMode = mode
-                showResizeDialog = false
-            }
-        )
-    }
-
-    if (showTrackSelectionDialog && exoPlayer != null) {
-        TrackSelectionDialog(
-            exoPlayer = exoPlayer,
-            onDismiss = { showTrackSelectionDialog = false }
-        )
-    }
-
-    val pickerItems = remember(sources.size, unifiedSources.size, currentSourceIndex, currentUrl) {
-        if (unifiedSources.isNotEmpty()) {
-            unifiedSources.mapIndexed { index, source ->
-                PickerSourceItem(
-                    title = source.sourceName,
-                    subtitle = source.originalChannelName,
-                    typeTag = if (source.sourceType == "EXTREME") "EXTREME" else "ADVANCED",
-                    isSelected = source.streamUrl == currentUrl,
-                    onClick = {
-                        currentSourceIndex = index
-                        currentUrl = source.streamUrl
-                        currentUa = source.userAgent
-                        currentCookie = source.cookie
-                        currentKeyId = source.keyId
-                        currentKey = source.key
-                        currentHeaders = source.headers
-                        forceKnownHeaders = false
-                        hasRenderedFirstFrame = false
-                        showSourcePickerModal = false
-                    }
-                )
-            }
-        } else if (sources.isNotEmpty()) {
-            sources.mapIndexed { index, source ->
-                PickerSourceItem(
-                    title = source.sourceName,
-                    subtitle = source.streamUrl,
-                    typeTag = "ADVANCED",
-                    isSelected = index == currentSourceIndex,
-                    onClick = {
-                        currentSourceIndex = index
-                        currentUrl = source.streamUrl
-                        forceKnownHeaders = false
-                        hasRenderedFirstFrame = false
-                        showSourcePickerModal = false
-                    }
-                )
-            }
-        } else {
-            emptyList()
-        }
-    }
-
-    if (showSourcePickerModal && pickerItems.isNotEmpty()) {
-        SourceSwitcherDialog(
-            items = pickerItems,
-            onDismiss = { showSourcePickerModal = false }
-        )
-    }
+    if (showQualityPickerModal) QualitySwitcherDialog(exoPlayer, trackSelector, selectedQualityKey, { selectedQualityKey = it }, { showQualityPickerModal = false })
+    if (showResizeDialog) ResizeModeDialog(currentResizeMode, { showResizeDialog = false }, { currentResizeMode = it; showResizeDialog = false })
+    if (showTrackSelectionDialog && exoPlayer != null) TrackSelectionDialog(exoPlayer, { showTrackSelectionDialog = false })
 }
 
 @Composable
-fun TrackSelectionDialog(
-    exoPlayer: ExoPlayer,
-    onDismiss: () -> Unit
-) {
-    val premiumBg = Color(0xFF09090B)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumTextSec = Color(0xFFA1A1AA)
-
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-
+fun TrackSelectionDialog(exoPlayer: ExoPlayer, onDismiss: () -> Unit) {
+    val premiumBg = Color(0xFF09090B); val premiumSurface = Color(0xFF121212); val premiumAccent = Color(0xFFFAFAFA); val premiumTextSec = Color(0xFFAAAAAA)
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var selectionVersion by remember { mutableIntStateOf(0) }
 
     DisposableEffect(exoPlayer) {
-        val listener = object : Player.Listener {
-            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-                selectionVersion++
-            }
-        }
+        val listener = object : Player.Listener { override fun onTracksChanged(tracks: androidx.media3.common.Tracks) { selectionVersion++ } }
         exoPlayer.addListener(listener)
         onDispose { exoPlayer.removeListener(listener) }
     }
 
     val tracks = exoPlayer.currentTracks
-    val audioTracks = remember(tracks, selectionVersion) {
-        tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-    }
-    val subtitleTracks = remember(tracks, selectionVersion) {
-        tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-    }
+    val audioTracks = remember(tracks, selectionVersion) { tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO } }
+    val subtitleTracks = remember(tracks, selectionVersion) { tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT } }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier
-                .width(if (isLandscape) 580.dp else 340.dp)
-                .wrapContentHeight(),
-            shape = RoundedCornerShape(24.dp),
-            color = premiumSurface,
-            tonalElevation = 8.dp
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Audio & Subtitles",
-                        color = premiumAccent,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 20.sp
-                    )
-                    TextButton(onClick = onDismiss) {
-                        Text("Close", color = premiumTextSec, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.width(if (isLandscape) 580.dp else 340.dp).wrapContentHeight(), shape = RoundedCornerShape(16.dp), color = premiumSurface, tonalElevation = 0.dp) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Audio & Subtitles", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 20.sp)
+                    TextButton(onClick = onDismiss) { Text("Close", color = premiumTextSec, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
                 }
-
                 Spacer(modifier = Modifier.height(12.dp))
-
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = if (isLandscape) 220.dp else 360.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    item {
-                        Text("Audio Tracks", color = Color(0xFF3B82F6), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
-
-                    if (audioTracks.isEmpty()) {
-                        item {
-                            Text("No alternative audio tracks available", color = premiumTextSec, fontSize = 13.sp)
-                        }
-                    } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = if (isLandscape) 220.dp else 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { Text("Audio Tracks", color = Color(0xFF3B82F6), fontWeight = FontWeight.Bold, fontSize = 14.sp) }
+                    if (audioTracks.isEmpty()) item { Text("No alternative audio tracks available", color = premiumTextSec, fontSize = 13.sp) }
+                    else {
                         audioTracks.forEach { group ->
                             for (i in 0 until group.length) {
-                                val format = group.getTrackFormat(i)
-                                val isSelected = group.isTrackSelected(i)
-                                val label = format.language?.uppercase() ?: "Audio Track ${i + 1}"
+                                val format = group.getTrackFormat(i); val isSelected = group.isTrackSelected(i)
                                 item {
                                     Card(
-                                        onClick = {
-                                            val builder = exoPlayer.trackSelectionParameters.buildUpon()
-                                            builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i))
-                                            exoPlayer.trackSelectionParameters = builder.build()
-                                            selectionVersion++
-                                        },
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = if (isSelected) Color(0xFF27272A) else premiumBg
-                                        ),
-                                        shape = RoundedCornerShape(12.dp),
-                                        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
-                                    ) {
-                                        Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.AudioFile, null, tint = premiumAccent)
-                                            Spacer(modifier = Modifier.width(12.dp))
-                                            Text(label, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                        }
-                                    }
+                                        onClick = { val builder = exoPlayer.trackSelectionParameters.buildUpon(); builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i)); exoPlayer.trackSelectionParameters = builder.build(); selectionVersion++ },
+                                        colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFF27272A) else premiumBg), shape = RoundedCornerShape(10.dp), border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
+                                    ) { Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.AudioFile, null, tint = premiumAccent); Spacer(modifier = Modifier.width(12.dp)); Text(format.language?.uppercase() ?: "Audio Track ${i + 1}", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 14.sp) } }
                                 }
                             }
                         }
                     }
-
-                    item {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Subtitles", color = Color(0xFF3B82F6), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
-
+                    item { Spacer(modifier = Modifier.height(8.dp)); Text("Subtitles", color = Color(0xFF3B82F6), fontWeight = FontWeight.Bold, fontSize = 14.sp) }
                     item {
                         val isSubDisabled = exoPlayer.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
                         Card(
-                            onClick = {
-                                val builder = exoPlayer.trackSelectionParameters.buildUpon()
-                                builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                                exoPlayer.trackSelectionParameters = builder.build()
-                                selectionVersion++
-                            },
-                            colors = CardDefaults.cardColors(containerColor = if (isSubDisabled) Color(0xFF27272A) else premiumBg),
-                            shape = RoundedCornerShape(12.dp),
-                            border = if (isSubDisabled) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
-                        ) {
-                            Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.ClosedCaptionDisabled, null, tint = premiumTextSec)
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text("Off", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            }
-                        }
+                            onClick = { val builder = exoPlayer.trackSelectionParameters.buildUpon(); builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true); exoPlayer.trackSelectionParameters = builder.build(); selectionVersion++ },
+                            colors = CardDefaults.cardColors(containerColor = if (isSubDisabled) Color(0xFF27272A) else premiumBg), shape = RoundedCornerShape(10.dp), border = if (isSubDisabled) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
+                        ) { Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.ClosedCaptionDisabled, null, tint = premiumTextSec); Spacer(modifier = Modifier.width(12.dp)); Text("Off", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 14.sp) } }
                     }
-
                     subtitleTracks.forEach { group ->
                         for (i in 0 until group.length) {
-                            val format = group.getTrackFormat(i)
-                            val isSelected = group.isTrackSelected(i) && !exoPlayer.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
-                            val label = format.language?.uppercase() ?: format.label ?: "Subtitle ${i + 1}"
+                            val format = group.getTrackFormat(i); val isSelected = group.isTrackSelected(i) && !exoPlayer.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
                             item {
                                 Card(
-                                    onClick = {
-                                        val builder = exoPlayer.trackSelectionParameters.buildUpon()
-                                        builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                                        builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i))
-                                        exoPlayer.trackSelectionParameters = builder.build()
-                                        selectionVersion++
-                                    },
-                                    colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFF27272A) else premiumBg),
-                                    shape = RoundedCornerShape(12.dp),
-                                    border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
-                                ) {
-                                    Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.ClosedCaption, null, tint = premiumAccent)
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Text(label, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                    }
-                                }
+                                    onClick = { val builder = exoPlayer.trackSelectionParameters.buildUpon(); builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false); builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i)); exoPlayer.trackSelectionParameters = builder.build(); selectionVersion++ },
+                                    colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFF27272A) else premiumBg), shape = RoundedCornerShape(10.dp), border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
+                                ) { Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.ClosedCaption, null, tint = premiumAccent); Spacer(modifier = Modifier.width(12.dp)); Text(format.language?.uppercase() ?: format.label ?: "Subtitle ${i + 1}", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 14.sp) } }
                             }
                         }
                     }
@@ -1104,232 +549,33 @@ fun TrackSelectionDialog(
 }
 
 @Composable
-fun SourceSwitcherDialog(
-    items: List<PickerSourceItem>,
-    onDismiss: () -> Unit
-) {
-    val premiumBg = Color(0xFF09090B)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumTextSec = Color(0xFFA1A1AA)
-
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier
-                .width(if (isLandscape) 580.dp else 340.dp)
-                .wrapContentHeight(),
-            shape = RoundedCornerShape(24.dp),
-            color = premiumSurface,
-            tonalElevation = 8.dp
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Select Source",
-                        color = premiumAccent,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 20.sp
-                    )
-                    TextButton(onClick = onDismiss) {
-                        Text("Close", color = premiumTextSec, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
-                }
-
+fun QualitySwitcherDialog(exoPlayer: ExoPlayer?, trackSelector: DefaultTrackSelector?, selectedQualityKey: String, onQualitySelected: (String) -> Unit, onDismiss: () -> Unit) {
+    val premiumBg = Color(0xFF09090B); val premiumSurface = Color(0xFF121212); val premiumAccent = Color(0xFFFAFAFA); val premiumTextSec = Color(0xFFAAAAAA)
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.width(if (isLandscape) 580.dp else 340.dp).wrapContentHeight(), shape = RoundedCornerShape(16.dp), color = premiumSurface, tonalElevation = 0.dp) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text("Select Quality", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 20.sp); TextButton(onClick = onDismiss) { Text("Close", color = premiumTextSec, fontWeight = FontWeight.Bold, fontSize = 14.sp) } }
                 Spacer(modifier = Modifier.height(12.dp))
-
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = if (isLandscape) 220.dp else 420.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(items) { item ->
-                        Card(
-                            onClick = item.onClick,
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (item.isSelected) Color(0xFF27272A) else premiumBg
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            border = if (item.isSelected) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = item.title,
-                                        color = premiumAccent,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = item.subtitle,
-                                        color = premiumTextSec,
-                                        fontSize = 12.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(
-                                            when (item.typeTag) {
-                                                "EXTREME" -> Color(0xFFE50914)
-                                                else -> Color(0xFF3B82F6)
-                                            }
-                                        )
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        text = item.typeTag,
-                                        color = Color.White,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Black
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun QualitySwitcherDialog(
-    exoPlayer: ExoPlayer?,
-    trackSelector: DefaultTrackSelector?,
-    selectedQualityKey: String,
-    onQualitySelected: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val premiumBg = Color(0xFF09090B)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumTextSec = Color(0xFFA1A1AA)
-
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier
-                .width(if (isLandscape) 580.dp else 340.dp)
-                .wrapContentHeight(),
-            shape = RoundedCornerShape(24.dp),
-            color = premiumSurface,
-            tonalElevation = 8.dp
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Select Quality",
-                        color = premiumAccent,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 20.sp
-                    )
-                    TextButton(onClick = onDismiss) {
-                        Text("Close", color = premiumTextSec, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = if (isLandscape) 220.dp else 360.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = if (isLandscape) 220.dp else 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val isAutoSelected = selectedQualityKey == "auto"
                     item {
                         Card(
-                            onClick = {
-                                trackSelector?.let { ts ->
-                                    ts.setParameters(ts.buildUponParameters().clearVideoSizeConstraints().clearOverrides().build())
-                                }
-                                onQualitySelected("auto")
-                                onDismiss()
-                            },
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (isAutoSelected) Color(0xFF27272A) else premiumBg
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            border = if (isAutoSelected) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Auto (Adaptive)", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                QualityBoxBadge(tag = "AUTO")
-                            }
-                        }
+                            onClick = { trackSelector?.let { ts -> ts.setParameters(ts.buildUponParameters().clearVideoSizeConstraints().clearOverrides().build()) }; onQualitySelected("auto"); onDismiss() },
+                            colors = CardDefaults.cardColors(containerColor = if (isAutoSelected) Color(0xFF27272A) else premiumBg), shape = RoundedCornerShape(10.dp), border = if (isAutoSelected) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
+                        ) { Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) { Text("Auto (Adaptive)", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp); QualityBoxBadge("AUTO") } }
                     }
-
                     val videoGroups = exoPlayer?.currentTracks?.groups?.filter { it.type == C.TRACK_TYPE_VIDEO } ?: emptyList()
                     videoGroups.forEach { group ->
                         for (i in 0 until group.length) {
                             val format = group.getTrackFormat(i)
                             if (format.height > 0) {
-                                val tag = getQualityTag(format.height)
-                                val qualityKey = "${format.height}p"
-                                val isSelected = selectedQualityKey == qualityKey
-
+                                val qualityKey = "${format.height}p"; val isSelected = selectedQualityKey == qualityKey
                                 item {
                                     Card(
-                                        onClick = {
-                                            trackSelector?.let { ts ->
-                                                ts.setParameters(ts.buildUponParameters().clearOverrides().addOverride(TrackSelectionOverride(group.mediaTrackGroup, i)).build())
-                                            }
-                                            onQualitySelected(qualityKey)
-                                            onDismiss()
-                                        },
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = if (isSelected) Color(0xFF27272A) else premiumBg
-                                        ),
-                                        shape = RoundedCornerShape(12.dp),
-                                        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Text(qualityKey, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                            QualityBoxBadge(tag = tag)
-                                        }
-                                    }
+                                        onClick = { trackSelector?.let { ts -> ts.setParameters(ts.buildUponParameters().clearOverrides().addOverride(TrackSelectionOverride(group.mediaTrackGroup, i)).build()) }; onQualitySelected(qualityKey); onDismiss() },
+                                        colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFF27272A) else premiumBg), shape = RoundedCornerShape(10.dp), border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
+                                    ) { Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) { Text(qualityKey, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp); QualityBoxBadge(getQualityTag(format.height)) } }
                                 }
                             }
                         }
@@ -1341,90 +587,22 @@ fun QualitySwitcherDialog(
 }
 
 @Composable
-fun ResizeModeDialog(
-    currentResizeMode: Int,
-    onDismiss: () -> Unit,
-    onResizeModeSelected: (Int) -> Unit
-) {
-    val premiumBg = Color(0xFF09090B)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumTextSec = Color(0xFFA1A1AA)
+fun ResizeModeDialog(currentResizeMode: Int, onDismiss: () -> Unit, onResizeModeSelected: (Int) -> Unit) {
+    val premiumBg = Color(0xFF09090B); val premiumSurface = Color(0xFF121212); val premiumAccent = Color(0xFFFAFAFA); val premiumTextSec = Color(0xFFAAAAAA)
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val resizeModes = listOf(Triple("Fit", AspectRatioFrameLayout.RESIZE_MODE_FIT, Icons.Default.FitScreen), Triple("Fill (Stretch)", AspectRatioFrameLayout.RESIZE_MODE_FILL, Icons.Default.Fullscreen), Triple("Zoom (Full Screen)", AspectRatioFrameLayout.RESIZE_MODE_ZOOM, Icons.Default.ZoomIn), Triple("Fixed Width", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH, Icons.Default.WidthNormal), Triple("Fixed Height", AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT, Icons.Default.Height))
 
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-
-    val resizeModes = listOf(
-        Triple("Fit", AspectRatioFrameLayout.RESIZE_MODE_FIT, Icons.Default.FitScreen),
-        Triple("Fill (Stretch)", AspectRatioFrameLayout.RESIZE_MODE_FILL, Icons.Default.Fullscreen),
-        Triple("Zoom (Full Screen)", AspectRatioFrameLayout.RESIZE_MODE_ZOOM, Icons.Default.ZoomIn),
-        Triple("Fixed Width", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH, Icons.Default.WidthNormal),
-        Triple("Fixed Height", AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT, Icons.Default.Height)
-    )
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier
-                .width(if (isLandscape) 580.dp else 340.dp)
-                .wrapContentHeight(),
-            shape = RoundedCornerShape(24.dp),
-            color = premiumSurface,
-            tonalElevation = 8.dp
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Screen Aspect Ratio",
-                        color = premiumAccent,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 20.sp
-                    )
-                    TextButton(onClick = onDismiss) {
-                        Text("Close", color = premiumTextSec, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
-                }
-
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.width(if (isLandscape) 580.dp else 340.dp).wrapContentHeight(), shape = RoundedCornerShape(16.dp), color = premiumSurface, tonalElevation = 0.dp) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text("Screen Aspect Ratio", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 20.sp); TextButton(onClick = onDismiss) { Text("Close", color = premiumTextSec, fontWeight = FontWeight.Bold, fontSize = 14.sp) } }
                 Spacer(modifier = Modifier.height(12.dp))
-
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = if (isLandscape) 220.dp else 360.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = if (isLandscape) 220.dp else 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(resizeModes) { (label, mode, icon) ->
                         val isSelected = currentResizeMode == mode
                         Card(
-                            onClick = { onResizeModeSelected(mode) },
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (isSelected) Color(0xFF27272A) else premiumBg
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(icon, null, tint = if (isSelected) premiumAccent else premiumTextSec)
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(
-                                    text = label,
-                                    color = premiumAccent,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp
-                                )
-                            }
-                        }
+                            onClick = { onResizeModeSelected(mode) }, colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFF27272A) else premiumBg), shape = RoundedCornerShape(10.dp), border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, premiumAccent) else null
+                        ) { Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = if (isSelected) premiumAccent else premiumTextSec); Spacer(modifier = Modifier.width(16.dp)); Text(label, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp) } }
                     }
                 }
             }
