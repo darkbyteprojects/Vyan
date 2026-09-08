@@ -41,13 +41,10 @@ import coil.compose.SubcomposeAsyncImage
 import com.vyan.xtreamplayer.core.ExtremeChannel
 import com.vyan.xtreamplayer.core.ExtremeSourceConfig
 import com.vyan.xtreamplayer.core.ExtremeSourceRegistry
-import com.vyan.xtreamplayer.core.SourceType
 import com.vyan.xtreamplayer.data.managers.SettingsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 
 @Composable
 fun ExtremeHubScreen(
@@ -57,7 +54,6 @@ fun ExtremeHubScreen(
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("app_settings", Context.MODE_PRIVATE) }
 
-    // PERFECT MEMORY: Screen navigation states
     var currentScreen by rememberSaveable { mutableStateOf("hub") }
     var previousScreen by rememberSaveable { mutableStateOf("hub") }
 
@@ -66,14 +62,13 @@ fun ExtremeHubScreen(
     val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
 
+    var refreshTrigger by remember { mutableIntStateOf(0) }
     var selectedExtremeSources by remember { mutableStateOf(sharedPrefs.getStringSet("selected_extreme_sources", emptySet()) ?: emptySet()) }
-    var customSourcesJson by remember { mutableStateOf(sharedPrefs.getString("custom_extreme_sources", "[]") ?: "[]") }
 
     var allMarketplaceSources by remember { mutableStateOf<List<ExtremeSourceConfig>>(emptyList()) }
     var customSources by remember { mutableStateOf<List<ExtremeSourceConfig>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
-    // Channel Viewer States (Saved via ID for tab switching)
     var selectedSourceId by rememberSaveable { mutableStateOf<String?>(null) }
     var channelList by remember { mutableStateOf<List<ExtremeChannel>>(emptyList()) }
     var isFetchingChannels by remember { mutableStateOf(false) }
@@ -81,37 +76,19 @@ fun ExtremeHubScreen(
     var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
     var sourceToDelete by remember { mutableStateOf<ExtremeSourceConfig?>(null) }
 
-    // Category State for Hub
     var selectedHubCategory by rememberSaveable { mutableStateOf("All") }
 
-    val premiumBg = Color(0xFF09090B)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumTextSec = Color(0xFFA1A1AA)
-    val softRed = Color(0xFF881337)
+    val premiumBg = Color(0xFF0E1621)
+    val premiumSurface = Color(0xFF17212B)
+    val premiumSurfaceVariant = Color(0xFF242F3D)
+    val premiumAccent = Color(0xFFFFFFFF)
+    val premiumTextSec = Color(0xFF7F91A4)
+    val premiumRed = Color(0xFFE53935)
+    val premiumBlue = Color(0xFF5288C1)
 
-    fun parseCustomSources() {
-        val list = mutableListOf<ExtremeSourceConfig>()
-        try {
-            val arr = JSONArray(customSourcesJson)
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                list.add(
-                    ExtremeSourceConfig(
-                        id = obj.optString("id"),
-                        name = obj.optString("name"),
-                        category = obj.optString("category", "Custom"),
-                        url = obj.optString("url"),
-                        type = if (obj.optString("type") == "M3U") SourceType.M3U_DIRECT else SourceType.JSON_WRAPPED,
-                        image = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/JioTV_logo.svg/1024px-JioTV_logo.svg.png"
-                    )
-                )
-            }
-        } catch (_: Exception) {}
-        customSources = list
+    LaunchedEffect(refreshTrigger) {
+        customSources = ExtremeSourceRegistry.getCustomSources(context)
     }
-
-    LaunchedEffect(customSourcesJson) { parseCustomSources() }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -143,14 +120,13 @@ fun ExtremeHubScreen(
         }
     }
 
-    // PERFECT BACK NAVIGATION
     BackHandler(enabled = currentScreen != "hub") {
         if (isSearchExpanded) {
             isSearchExpanded = false
             channelSearchQuery = ""
         } else if (currentScreen == "channels") {
             selectedSourceId = null
-            currentScreen = previousScreen // Returns properly to Hub or Marketplace!
+            currentScreen = previousScreen
         } else {
             currentScreen = "hub"
         }
@@ -158,7 +134,7 @@ fun ExtremeHubScreen(
 
     if (isLoading) {
         Box(modifier = Modifier.fillMaxSize().background(premiumBg), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = premiumAccent)
+            CircularProgressIndicator(color = premiumBlue)
         }
         return
     }
@@ -167,16 +143,16 @@ fun ExtremeHubScreen(
         val filteredChannels = channelList.filter { channelSearchQuery.isBlank() || it.name.contains(channelSearchQuery, ignoreCase = true) }
 
         Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp).animateContentSize()) {
                     if (isSearchExpanded) {
                         TextField(
                             value = channelSearchQuery, onValueChange = { channelSearchQuery = it }, modifier = Modifier.fillMaxWidth(),
                             placeholder = { Text("Search channels...", color = premiumTextSec, fontSize = 15.sp) },
-                            leadingIcon = { IconButton(onClick = { isSearchExpanded = false; channelSearchQuery = "" }) { Icon(Icons.Default.ArrowBack, null, tint = premiumAccent) } },
-                            trailingIcon = { if (channelSearchQuery.isNotEmpty()) IconButton(onClick = { channelSearchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumAccent) } },
-                            shape = CircleShape, singleLine = true,
-                            colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurface, unfocusedContainerColor = premiumSurface, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
+                            leadingIcon = { IconButton(onClick = { isSearchExpanded = false; channelSearchQuery = "" }) { Icon(Icons.Default.ArrowBack, null, tint = premiumTextSec) } },
+                            trailingIcon = { if (channelSearchQuery.isNotEmpty()) IconButton(onClick = { channelSearchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumTextSec) } },
+                            shape = RoundedCornerShape(16.dp), singleLine = true,
+                            colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurfaceVariant, unfocusedContainerColor = premiumSurfaceVariant, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
                         )
                     } else {
                         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -185,46 +161,46 @@ fun ExtremeHubScreen(
                             }
                             Spacer(modifier = Modifier.width(16.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(selectedSourceForChannels?.name ?: "Channels", color = premiumAccent, fontSize = 24.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${channelList.size} Channels Found", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text(selectedSourceForChannels?.name ?: "Channels", color = premiumAccent, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${channelList.size} Channels Found", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                             }
                             IconButton(onClick = { isSearchExpanded = true }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) {
-                                Icon(Icons.Default.Search, "Search", tint = premiumAccent)
+                                Icon(Icons.Default.Search, "Search", tint = premiumTextSec)
                             }
                         }
                     }
                 }
 
                 if (isFetchingChannels) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumAccent) }
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumBlue) }
                 } else if (filteredChannels.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No channels found.", color = premiumTextSec) }
                 } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
                         itemsIndexed(filteredChannels, key = { index, ch -> "${ch.id}_${ch.streamUrl}_$index" }) { _, channel ->
                             Card(
                                 onClick = { onPlayExtremeChannel(channel) },
                                 colors = CardDefaults.cardColors(containerColor = premiumSurface),
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(16.dp),
                                 elevation = CardDefaults.cardElevation(0.dp)
                             ) {
-                                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    SubcomposeAsyncImage(model = channel.logo, contentDescription = null, modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(premiumBg), contentScale = ContentScale.Crop, error = { Icon(Icons.Default.Tv, null, tint = premiumTextSec) })
-                                    Spacer(modifier = Modifier.width(16.dp))
+                                Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    SubcomposeAsyncImage(model = channel.logo, contentDescription = null, modifier = Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(premiumBg), contentScale = ContentScale.Crop, error = { Icon(Icons.Default.Tv, null, tint = premiumTextSec.copy(alpha = 0.5f)) })
+                                    Spacer(modifier = Modifier.width(14.dp))
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(channel.name, color = premiumAccent, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(channel.name, color = premiumAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(channel.sourceName.ifEmpty { "Source Stream" }, color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                            Text(channel.sourceName.ifEmpty { "Source Stream" }, color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                             if (channel.isDrmProtected) {
                                                 Spacer(modifier = Modifier.width(8.dp))
-                                                Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF27272A)).padding(horizontal = 8.dp, vertical = 2.dp)) {
-                                                    Text("DRM", color = premiumAccent, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                                                Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(premiumSurfaceVariant).padding(horizontal = 8.dp, vertical = 2.dp)) {
+                                                    Text("DRM", color = premiumAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                                 }
                                             }
                                         }
                                     }
-                                    Icon(Icons.Default.PlayCircle, null, tint = premiumAccent, modifier = Modifier.size(32.dp))
+                                    Icon(Icons.Default.PlayCircle, null, tint = premiumBlue, modifier = Modifier.size(32.dp))
                                 }
                             }
                         }
@@ -237,13 +213,12 @@ fun ExtremeHubScreen(
             onBack = { currentScreen = "hub" },
             onSourceSelected = { source ->
                 selectedSourceId = source.id
-                previousScreen = "marketplace" // Remembers we came from marketplace!
+                previousScreen = "marketplace"
                 currentScreen = "channels"
             }
         )
         return
     } else {
-        // HUB SCREEN
         val myMarketplaceSources = allMarketplaceSources.filter { selectedExtremeSources.contains(it.id) }
         val combinedHubSources = myMarketplaceSources + customSources
 
@@ -257,12 +232,12 @@ fun ExtremeHubScreen(
         }
 
         Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Extreme Hub", color = premiumAccent, fontSize = 32.sp, fontWeight = FontWeight.Black)
+                        Text("Extreme Hub", color = premiumAccent, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text("Your installed private streams", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Your installed private streams", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     }
                 }
 
@@ -277,8 +252,8 @@ fun ExtremeHubScreen(
                                 onClick = { selectedHubCategory = category },
                                 label = { Text(category, fontWeight = FontWeight.Bold, fontSize = 13.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = premiumAccent,
-                                    selectedLabelColor = premiumBg,
+                                    selectedContainerColor = premiumBlue,
+                                    selectedLabelColor = premiumAccent,
                                     containerColor = premiumSurface,
                                     labelColor = premiumTextSec
                                 ),
@@ -292,7 +267,7 @@ fun ExtremeHubScreen(
                 if (filteredHubSources.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.Storefront, null, tint = premiumTextSec, modifier = Modifier.size(64.dp))
+                            Icon(Icons.Default.Storefront, null, tint = premiumTextSec.copy(alpha = 0.5f), modifier = Modifier.size(64.dp))
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(if(combinedHubSources.isEmpty()) "Your Hub is Empty" else "No sources in this category", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                             Spacer(modifier = Modifier.height(8.dp))
@@ -302,38 +277,38 @@ fun ExtremeHubScreen(
                 } else {
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(minSize = 160.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                         contentPadding = PaddingValues(bottom = 100.dp)
                     ) {
                         items(filteredHubSources) { source ->
                             val isCustom = source.id.startsWith("custom_")
                             Card(
-                                modifier = Modifier.fillMaxWidth().height(140.dp).clip(RoundedCornerShape(20.dp))
+                                modifier = Modifier.fillMaxWidth().height(140.dp).clip(RoundedCornerShape(16.dp))
                                     .combinedClickable(
                                         onClick = {
                                             selectedSourceId = source.id
-                                            previousScreen = "hub" // Remembers we came from hub
+                                            previousScreen = "hub"
                                             currentScreen = "channels"
                                         },
                                         onLongClick = { if(isCustom) sourceToDelete = source }
                                     ),
                                 colors = CardDefaults.cardColors(containerColor = premiumSurface),
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(16.dp),
                                 elevation = CardDefaults.cardElevation(0.dp)
                             ) {
                                 Column(modifier = Modifier.fillMaxSize()) {
                                     Box(modifier = Modifier.fillMaxWidth().height(80.dp)) {
                                         AsyncImage(model = source.image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                                        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)))
+                                        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)))
                                         if (isCustom) {
-                                            Box(modifier = Modifier.padding(8.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF3B82F6)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                                Text("CUSTOM", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                                            Box(modifier = Modifier.padding(8.dp).clip(RoundedCornerShape(6.dp)).background(premiumBlue).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                                Text("CUSTOM", color = premiumAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                             }
                                         }
                                     }
                                     Row(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text(source.name, color = premiumAccent, fontSize = 15.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(source.name, color = premiumAccent, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         IconButton(
                                             onClick = {
                                                 if (isCustom) {
@@ -345,7 +320,7 @@ fun ExtremeHubScreen(
                                                 }
                                             },
                                             modifier = Modifier.size(32.dp)
-                                        ) { Icon(Icons.Default.Delete, "Remove", tint = softRed, modifier = Modifier.size(18.dp)) }
+                                        ) { Icon(Icons.Default.Delete, "Remove", tint = premiumRed, modifier = Modifier.size(18.dp)) }
                                     }
                                 }
                             }
@@ -356,8 +331,8 @@ fun ExtremeHubScreen(
 
             FloatingActionButton(
                 onClick = { showMenuSheet = true },
-                containerColor = premiumAccent,
-                contentColor = premiumBg,
+                containerColor = premiumBlue,
+                contentColor = premiumAccent,
                 shape = CircleShape,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 40.dp)
             ) {
@@ -373,26 +348,26 @@ fun ExtremeHubScreen(
             containerColor = premiumSurface,
             dragHandle = { BottomSheetDefaults.DragHandle(color = premiumTextSec) }
         ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp).padding(bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Add Source to Hub", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(bottom = 8.dp))
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp).padding(bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Add Source to Hub", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
 
-                Card(onClick = { scope.launch { sheetState.hide() }.invokeOnCompletion { showMenuSheet = false; currentScreen = "marketplace" } }, colors = CardDefaults.cardColors(containerColor = softRed), shape = RoundedCornerShape(16.dp)) {
+                Card(onClick = { scope.launch { sheetState.hide() }.invokeOnCompletion { showMenuSheet = false; currentScreen = "marketplace" } }, colors = CardDefaults.cardColors(containerColor = premiumBlue), shape = RoundedCornerShape(16.dp)) {
                     Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Storefront, null, tint = premiumAccent, modifier = Modifier.size(28.dp))
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
-                            Text("Browse Marketplace", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 16.sp)
+                            Text("Browse Marketplace", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                             Text("Install verified community sources", color = premiumAccent.copy(alpha = 0.8f), fontSize = 13.sp)
                         }
                     }
                 }
 
-                Card(onClick = { scope.launch { sheetState.hide() }.invokeOnCompletion { showMenuSheet = false; showAddCustomDialog = true } }, colors = CardDefaults.cardColors(containerColor = Color(0xFF27272A)), shape = RoundedCornerShape(16.dp)) {
+                Card(onClick = { scope.launch { sheetState.hide() }.invokeOnCompletion { showMenuSheet = false; showAddCustomDialog = true } }, colors = CardDefaults.cardColors(containerColor = premiumSurfaceVariant), shape = RoundedCornerShape(16.dp)) {
                     Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Link, null, tint = premiumAccent, modifier = Modifier.size(28.dp))
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
-                            Text("Add Custom URL", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 16.sp)
+                            Text("Add Custom URL", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                             Text("Manually enter an M3U or JSON link", color = premiumTextSec, fontSize = 13.sp)
                         }
                     }
@@ -407,16 +382,16 @@ fun ExtremeHubScreen(
         var sourceType by remember { mutableStateOf("M3U") }
 
         Dialog(onDismissRequest = { showAddCustomDialog = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(modifier = Modifier.fillMaxWidth(0.9f).wrapContentHeight(), shape = RoundedCornerShape(24.dp), color = premiumSurface) {
+            Surface(modifier = Modifier.fillMaxWidth(0.9f).wrapContentHeight(), shape = RoundedCornerShape(20.dp), color = premiumSurface) {
                 Column(modifier = Modifier.padding(24.dp)) {
-                    Text("Add Custom Source", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                    Text("Add Custom Source", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(16.dp))
 
                     TextField(
                         value = sourceName, onValueChange = { sourceName = it },
                         placeholder = { Text("Source Name", color = premiumTextSec) },
                         modifier = Modifier.fillMaxWidth(), singleLine = true,
-                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumBg, unfocusedContainerColor = premiumBg, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent),
+                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurfaceVariant, unfocusedContainerColor = premiumSurfaceVariant, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent),
                         shape = RoundedCornerShape(12.dp)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -425,7 +400,7 @@ fun ExtremeHubScreen(
                         value = sourceUrl, onValueChange = { sourceUrl = it },
                         placeholder = { Text("M3U or JSON URL", color = premiumTextSec) },
                         modifier = Modifier.fillMaxWidth(), singleLine = true,
-                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumBg, unfocusedContainerColor = premiumBg, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent),
+                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurfaceVariant, unfocusedContainerColor = premiumSurfaceVariant, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent),
                         shape = RoundedCornerShape(12.dp)
                     )
                     Spacer(modifier = Modifier.height(16.dp))
@@ -436,13 +411,13 @@ fun ExtremeHubScreen(
                         FilterChip(
                             selected = sourceType == "M3U", onClick = { sourceType = "M3U" },
                             label = { Text("M3U Playlist") },
-                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumAccent, selectedLabelColor = premiumBg, containerColor = premiumBg, labelColor = premiumTextSec),
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumBlue, selectedLabelColor = premiumAccent, containerColor = premiumSurfaceVariant, labelColor = premiumTextSec),
                             border = null, shape = RoundedCornerShape(8.dp)
                         )
                         FilterChip(
                             selected = sourceType == "JSON", onClick = { sourceType = "JSON" },
                             label = { Text("JSON Wrapped") },
-                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumAccent, selectedLabelColor = premiumBg, containerColor = premiumBg, labelColor = premiumTextSec),
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumBlue, selectedLabelColor = premiumAccent, containerColor = premiumSurfaceVariant, labelColor = premiumTextSec),
                             border = null, shape = RoundedCornerShape(8.dp)
                         )
                     }
@@ -456,24 +431,16 @@ fun ExtremeHubScreen(
                         Button(
                             onClick = {
                                 if (sourceName.isNotBlank() && sourceUrl.isNotBlank()) {
-                                    val arr = JSONArray(customSourcesJson)
-                                    val newObj = JSONObject()
-                                    newObj.put("id", "custom_${System.currentTimeMillis()}")
-                                    newObj.put("name", sourceName.trim())
-                                    newObj.put("url", sourceUrl.trim())
-                                    newObj.put("type", sourceType)
-                                    newObj.put("category", "Custom")
-                                    arr.put(newObj)
-                                    val newJson = arr.toString()
-                                    sharedPrefs.edit().putString("custom_extreme_sources", newJson).apply()
-                                    customSourcesJson = newJson
+                                    ExtremeSourceRegistry.addCustomSource(context, sourceName, sourceUrl, sourceType)
+                                    refreshTrigger++
                                     showAddCustomDialog = false
                                     Toast.makeText(context, "Custom Source Added", Toast.LENGTH_SHORT).show()
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = premiumAccent, contentColor = premiumBg)
+                            colors = ButtonDefaults.buttonColors(containerColor = premiumBlue, contentColor = premiumAccent),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("Add Source", fontWeight = FontWeight.Black)
+                            Text("Add Source", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -485,29 +452,21 @@ fun ExtremeHubScreen(
         AlertDialog(
             onDismissRequest = { sourceToDelete = null },
             containerColor = premiumSurface,
-            shape = RoundedCornerShape(24.dp),
-            title = { Text("Delete Source?", color = premiumAccent, fontWeight = FontWeight.Black) },
+            shape = RoundedCornerShape(20.dp),
+            title = { Text("Delete Source?", color = premiumAccent, fontWeight = FontWeight.Bold) },
             text = { Text("Are you sure you want to delete '${sourceToDelete?.name}' from your custom sources?", color = premiumTextSec) },
             confirmButton = {
                 Button(
                     onClick = {
-                        val arr = JSONArray(sharedPrefs.getString("custom_extreme_sources", "[]") ?: "[]")
-                        val newArr = JSONArray()
-                        for (i in 0 until arr.length()) {
-                            val obj = arr.getJSONObject(i)
-                            if (obj.optString("id") != sourceToDelete?.id) {
-                                newArr.put(obj)
-                            }
-                        }
-                        val newJson = newArr.toString()
-                        sharedPrefs.edit().putString("custom_extreme_sources", newJson).apply()
-                        customSourcesJson = newJson
+                        ExtremeSourceRegistry.deleteCustomSource(context, sourceToDelete!!.id)
+                        refreshTrigger++
                         sourceToDelete = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = softRed, contentColor = premiumAccent)
-                ) { Text("Delete", fontWeight = FontWeight.Black) }
+                    colors = ButtonDefaults.buttonColors(containerColor = premiumRed, contentColor = premiumAccent),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("Delete", fontWeight = FontWeight.Bold) }
             },
-            dismissButton = { TextButton(onClick = { sourceToDelete = null }) { Text("Cancel", color = premiumTextSec, fontWeight = FontWeight.Black) } }
+            dismissButton = { TextButton(onClick = { sourceToDelete = null }) { Text("Cancel", color = premiumTextSec, fontWeight = FontWeight.Bold) } }
         )
     }
 }

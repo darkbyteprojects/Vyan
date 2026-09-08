@@ -24,23 +24,23 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.work.*
-import com.vyan.xtreamplayer.data.managers.AccountManager
+import com.vyan.xtreamplayer.data.managers.AccountStorageManager
 import com.vyan.xtreamplayer.data.managers.SettingsManager
 import com.vyan.xtreamplayer.data.managers.UserCustomCategory
 import com.vyan.xtreamplayer.models.AccountType
 import com.vyan.xtreamplayer.models.LiveCategory
-import com.vyan.xtreamplayer.models.LiveChannel
 import com.vyan.xtreamplayer.models.SeriesItem
 import com.vyan.xtreamplayer.models.VodMovie
 import com.vyan.xtreamplayer.network.ScrapedPortal
 import com.vyan.xtreamplayer.network.XtreamApi
+import com.vyan.xtreamplayer.stream.StreamProfile
+import com.vyan.xtreamplayer.stream.PlaybackMethodRouter
+import com.vyan.xtreamplayer.stream.PlaybackLinkParser
 import com.vyan.xtreamplayer.ui.screens.*
 import com.vyan.xtreamplayer.ui.theme.XtreamPlayerTheme
 import com.vyan.xtreamplayer.utils.AppUpdateDialog
 import com.vyan.xtreamplayer.utils.AppUpdateManager
 import com.vyan.xtreamplayer.utils.CrashReporter
-import com.vyan.xtreamplayer.utils.ExtremeSyncWorker
 import com.vyan.xtreamplayer.utils.GithubReleaseInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,25 +48,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.concurrent.TimeUnit
 import com.vyan.xtreamplayer.utils.LocalStreamProxy
 
 data class ActivePlayingStream(
-    val url: String,
+    val profile: StreamProfile,
     val title: String,
-    val sources: List<AggregatedChannel> = emptyList(),
-    val unifiedSources: List<UnifiedSource> = emptyList(),
-    val userAgent: String = "",
-    val cookie: String = "",
-    val keyId: String = "",
-    val key: String = "",
-    val headers: Map<String, String> = emptyMap(),
-    // FIX BUG 4: State added for live/VOD routing
     val isLiveStream: Boolean = true
 )
+
 class MainActivity : ComponentActivity() {
 
-    private lateinit var accountManager: AccountManager
+    private lateinit var accountStorageManager: AccountStorageManager
     private lateinit var settingsManager: SettingsManager
     private var backPressedTime: Long = 0L
 
@@ -98,32 +90,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun scheduleExtremeSyncWork(context: Context) {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
-        val syncRequest = PeriodicWorkRequestBuilder<ExtremeSyncWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(constraints)
-            .build()
-
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            "ExtremeSyncWorkJob",
-            ExistingPeriodicWorkPolicy.KEEP,
-            syncRequest
-        )
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CrashReporter.init(this)
-        accountManager = AccountManager(this)
+        accountStorageManager = AccountStorageManager(this)
         settingsManager = SettingsManager(this)
 
-        // START THE INVISIBLE LOCAL SERVER
         LocalStreamProxy.start()
-
-        scheduleExtremeSyncWork(this)
 
         setContent {
             var refreshTrigger by remember { mutableIntStateOf(0) }
@@ -135,7 +108,6 @@ class MainActivity : ComponentActivity() {
             var updateInfo by remember { mutableStateOf<GithubReleaseInfo?>(null) }
             var showUpdateDialog by remember { mutableStateOf(false) }
 
-            // Automatic In-App Update Verification
             LaunchedEffect(Unit) {
                 scope.launch {
                     try {
@@ -165,15 +137,20 @@ class MainActivity : ComponentActivity() {
                 var activeStream by remember { mutableStateOf<ActivePlayingStream?>(null) }
                 var previewPortal by remember { mutableStateOf<ScrapedPortal?>(null) }
 
-                val activeAccount = remember(refreshTrigger) { accountManager.getActiveAccount() }
-                val isMoviesHidden = remember(refreshTrigger) { accountManager.isMoviesTabHidden() }
-                val isSeriesHidden = remember(refreshTrigger) { accountManager.isSeriesTabHidden() }
+                val activeAccount = remember(refreshTrigger) { accountStorageManager.getActiveAccount() }
+                val isMoviesHidden = remember(refreshTrigger) { accountStorageManager.isMoviesTabHidden() }
+                val isSeriesHidden = remember(refreshTrigger) { accountStorageManager.isSeriesTabHidden() }
 
                 val activeAppMode = remember(refreshTrigger) { sharedPrefs.getString("active_app_mode", if (settingsManager.isLiveTvAutomatedMode) "advanced" else "basic") ?: "basic" }
                 val isUnifiedMode = activeAppMode == "unified"
                 val isExtremeMode = activeAppMode == "extreme"
                 val isAdvancedMode = activeAppMode == "advanced"
                 val isSportsMode = activeAppMode == "sports"
+
+                val navBg = Color(0xFF17212B)
+                val navSelectedColor = Color(0xFF5288C1)
+                val navUnselectedColor = Color(0xFF7F91A4)
+                val navTextWhite = Color(0xFFFFFFFF)
 
                 BackHandler(enabled = true) {
                     when {
@@ -199,14 +176,18 @@ class MainActivity : ComponentActivity() {
                         bottomBar = {
                             if (selectedLiveCategory == null && selectedAutoCategory == null && !isBrowsingHiddenCategories && previewPortal == null) {
                                 val navColors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = Color(0xFF09090B),
-                                    unselectedIconColor = Color(0xFFA1A1AA),
-                                    selectedTextColor = Color(0xFFFAFAFA),
-                                    unselectedTextColor = Color(0xFFA1A1AA),
-                                    indicatorColor = Color(0xFFFAFAFA)
+                                    selectedIconColor = navSelectedColor,
+                                    unselectedIconColor = navUnselectedColor,
+                                    selectedTextColor = navTextWhite,
+                                    unselectedTextColor = navUnselectedColor,
+                                    indicatorColor = navBg
                                 )
 
-                                NavigationBar(containerColor = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onSurface, tonalElevation = 0.dp) {
+                                NavigationBar(
+                                    containerColor = navBg,
+                                    contentColor = navTextWhite,
+                                    tonalElevation = 0.dp
+                                ) {
                                     val navItems = remember(isMoviesHidden, isSeriesHidden, activeAppMode) {
                                         listOfNotNull(
                                             Triple("live_tv", "Live TV", Icons.Default.Tv),
@@ -223,8 +204,8 @@ class MainActivity : ComponentActivity() {
                                             selected = currentTab == id,
                                             onClick = { currentTab = id; selectedLiveCategory = null; selectedAutoCategory = null; previewPortal = null; isBrowsingHiddenCategories = false },
                                             icon = { Icon(icon, label) },
-                                            label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif) },
-                                            colors = if (id == "extreme_hub") NavigationBarItemDefaults.colors(selectedIconColor = Color(0xFF09090B), unselectedIconColor = Color(0xFFA1A1AA), selectedTextColor = Color(0xFFE50914), unselectedTextColor = Color(0xFFA1A1AA), indicatorColor = Color(0xFFE50914)) else navColors
+                                            label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif) },
+                                            colors = navColors
                                         )
                                     }
                                 }
@@ -239,72 +220,57 @@ class MainActivity : ComponentActivity() {
                                         if (isSportsMode) {
                                             SportsScreen(
                                                 onPlayMatch = { payload, title ->
-                                                    activeStream = ActivePlayingStream(
-                                                        url = payload,
-                                                        title = title
-                                                    )
+                                                    val rawProfile = PlaybackLinkParser.parse(payload)
+                                                    val routedProfile = PlaybackMethodRouter.decideAndRoute(rawProfile)
+                                                    activeStream = ActivePlayingStream(profile = routedProfile, title = title)
                                                 }
                                             )
                                         } else if (isUnifiedMode) {
                                             UnifiedLiveTVScreen(
                                                 settingsManager = settingsManager,
-                                                accountManager = accountManager,
+                                                accountStorageManager = accountStorageManager,
                                                 onPlayUnifiedSources = { channelName, sources ->
                                                     if (sources.isNotEmpty()) {
                                                         val topSource = sources.first()
-                                                        activeStream = ActivePlayingStream(
-                                                            url = topSource.streamUrl,
-                                                            title = channelName,
-                                                            unifiedSources = sources,
-                                                            userAgent = topSource.userAgent,
-                                                            cookie = topSource.cookie,
-                                                            keyId = topSource.keyId,
-                                                            key = topSource.key,
-                                                            headers = topSource.headers
-                                                        )
+                                                        val rawProfile = PlaybackLinkParser.parse(topSource.streamUrl)
+                                                        val routedProfile = PlaybackMethodRouter.decideAndRoute(rawProfile)
+                                                        activeStream = ActivePlayingStream(profile = routedProfile, title = channelName)
                                                     }
                                                 }
                                             )
                                         } else if (selectedAutoCategory != null) {
                                             AutoChannelsScreen(
                                                 channelConfig = selectedAutoCategory!!,
-                                                accountManager = accountManager,
+                                                accountStorageManager = accountStorageManager,
                                                 settingsManager = settingsManager,
-                                                onPlayChannel = { url, title, sources ->
-                                                    activeStream = ActivePlayingStream(
-                                                        url = url,
-                                                        title = title,
-                                                        sources = sources
-                                                    )
+                                                onPlayChannel = { url, title, _ ->
+                                                    val rawProfile = PlaybackLinkParser.parse(url)
+                                                    val routedProfile = PlaybackMethodRouter.decideAndRoute(rawProfile)
+                                                    activeStream = ActivePlayingStream(profile = routedProfile, title = title)
                                                 },
                                                 onBack = { selectedAutoCategory = null })
                                         } else if (selectedLiveCategory != null && activeAccount != null) {
                                             ChannelsScreen(
                                                 categoryName = selectedLiveCategory!!.category_name,
                                                 categoryId = selectedLiveCategory!!.category_id,
-                                                accountManager = accountManager,
+                                                accountStorageManager = accountStorageManager,
                                                 onPlayChannel = { channel ->
                                                     activeAccount.let { acc ->
-                                                        activeStream = ActivePlayingStream(
-                                                            url = if (acc.type == AccountType.XTREAM) XtreamApi.buildLiveStreamUrl(
-                                                                acc.url,
-                                                                acc.username,
-                                                                acc.pass,
-                                                                channel.stream_id
-                                                            ) else channel.direct_source ?: "",
-                                                            title = channel.name
-                                                        )
+                                                        val rawUrl = if (acc.type == AccountType.XTREAM) XtreamApi.buildLiveStreamUrl(acc.url, acc.username, acc.pass, channel.stream_id) else channel.direct_source ?: ""
+                                                        val rawProfile = PlaybackLinkParser.parse(rawUrl)
+                                                        val routedProfile = PlaybackMethodRouter.decideAndRoute(rawProfile)
+                                                        activeStream = ActivePlayingStream(profile = routedProfile, title = channel.name)
                                                     }
                                                 },
                                                 onBack = { selectedLiveCategory = null })
                                         } else if (isBrowsingHiddenCategories && activeAccount != null) {
                                             HiddenCategoriesScreen(
-                                                accountManager = accountManager,
+                                                accountStorageManager = accountStorageManager,
                                                 onCategoryClick = { selectedLiveCategory = it },
                                                 onBack = { isBrowsingHiddenCategories = false })
                                         } else {
                                             LiveTVScreen(
-                                                accountManager = accountManager,
+                                                accountStorageManager = accountStorageManager,
                                                 settingsManager = settingsManager,
                                                 onCategoryClick = { selectedLiveCategory = it },
                                                 onAutoCategoryClick = { selectedAutoCategory = it },
@@ -316,34 +282,16 @@ class MainActivity : ComponentActivity() {
                                                     showGlobalAccountSwitcher = true
                                                 },
                                                 onPlayExtremeChannel = { extremeChannel ->
-                                                    val headersMap = mutableMapOf<String, String>()
-                                                    headersMap.putAll(extremeChannel.headers)
-                                                    if (extremeChannel.cookie.isNotBlank() && !headersMap.containsKey("Cookie") && !headersMap.containsKey("cookie")) {
-                                                        headersMap["Cookie"] = extremeChannel.cookie
+                                                    val rawProfile = PlaybackLinkParser.parse(extremeChannel.streamUrl)
+                                                    rawProfile.headers.putAll(extremeChannel.headers)
+                                                    if (extremeChannel.cookie.isNotBlank() && !rawProfile.headers.containsKey("Cookie") && !rawProfile.headers.containsKey("cookie")) {
+                                                        rawProfile.headers["Cookie"] = extremeChannel.cookie
                                                     }
-
-                                                    val unifiedSource = UnifiedSource(
-                                                        sourceName = "Extreme: ${extremeChannel.sourceName}",
-                                                        originalChannelName = extremeChannel.name,
-                                                        streamUrl = extremeChannel.streamUrl,
-                                                        sourceType = "EXTREME",
-                                                        userAgent = extremeChannel.userAgent,
-                                                        cookie = extremeChannel.cookie,
-                                                        keyId = extremeChannel.keyId,
-                                                        key = extremeChannel.key,
-                                                        headers = headersMap
-                                                    )
-
-                                                    activeStream = ActivePlayingStream(
-                                                        url = extremeChannel.streamUrl,
-                                                        title = extremeChannel.name,
-                                                        unifiedSources = listOf(unifiedSource),
-                                                        userAgent = extremeChannel.userAgent,
-                                                        cookie = extremeChannel.cookie,
-                                                        keyId = extremeChannel.keyId,
-                                                        key = extremeChannel.key,
-                                                        headers = headersMap
-                                                    )
+                                                    if (extremeChannel.userAgent.isNotBlank()) {
+                                                        rawProfile.headers["User-Agent"] = extremeChannel.userAgent
+                                                    }
+                                                    val routedProfile = PlaybackMethodRouter.decideAndRoute(rawProfile)
+                                                    activeStream = ActivePlayingStream(profile = routedProfile, title = extremeChannel.name)
                                                 }
                                             )
                                         }
@@ -353,40 +301,22 @@ class MainActivity : ComponentActivity() {
                                         ExtremeHubScreen(
                                             settingsManager = settingsManager,
                                             onPlayExtremeChannel = { extremeChannel ->
-                                                val headersMap = mutableMapOf<String, String>()
-                                                headersMap.putAll(extremeChannel.headers)
-                                                if (extremeChannel.cookie.isNotBlank() && !headersMap.containsKey("Cookie") && !headersMap.containsKey("cookie")) {
-                                                    headersMap["Cookie"] = extremeChannel.cookie
+                                                val rawProfile = PlaybackLinkParser.parse(extremeChannel.streamUrl)
+                                                rawProfile.headers.putAll(extremeChannel.headers)
+                                                if (extremeChannel.cookie.isNotBlank() && !rawProfile.headers.containsKey("Cookie") && !rawProfile.headers.containsKey("cookie")) {
+                                                    rawProfile.headers["Cookie"] = extremeChannel.cookie
                                                 }
-
-                                                val unifiedSource = UnifiedSource(
-                                                    sourceName = "Extreme: ${extremeChannel.sourceName}",
-                                                    originalChannelName = extremeChannel.name,
-                                                    streamUrl = extremeChannel.streamUrl,
-                                                    sourceType = "EXTREME",
-                                                    userAgent = extremeChannel.userAgent,
-                                                    cookie = extremeChannel.cookie,
-                                                    keyId = extremeChannel.keyId,
-                                                    key = extremeChannel.key,
-                                                    headers = headersMap
-                                                )
-
-                                                activeStream = ActivePlayingStream(
-                                                    url = extremeChannel.streamUrl,
-                                                    title = extremeChannel.name,
-                                                    unifiedSources = listOf(unifiedSource),
-                                                    userAgent = extremeChannel.userAgent,
-                                                    cookie = extremeChannel.cookie,
-                                                    keyId = extremeChannel.keyId,
-                                                    key = extremeChannel.key,
-                                                    headers = headersMap
-                                                )
+                                                if (extremeChannel.userAgent.isNotBlank()) {
+                                                    rawProfile.headers["User-Agent"] = extremeChannel.userAgent
+                                                }
+                                                val routedProfile = PlaybackMethodRouter.decideAndRoute(rawProfile)
+                                                activeStream = ActivePlayingStream(profile = routedProfile, title = extremeChannel.name)
                                             }
                                         )
                                     }
                                     "settings" -> SettingsScreen(
                                         settingsManager = settingsManager,
-                                        accountManager = accountManager,
+                                        accountStorageManager = accountStorageManager,
                                         onAddAccountClick = { isAddingAccount = true },
                                         onAccountSwitched = {
                                             refreshTrigger++; selectedLiveCategory =
@@ -397,43 +327,30 @@ class MainActivity : ComponentActivity() {
                                         if (previewPortal != null) {
                                             PortalPreviewScreen(
                                                 portal = previewPortal!!,
-                                                accountManager = accountManager,
+                                                accountStorageManager = accountStorageManager,
                                                 settingsManager = settingsManager,
                                                 onBack = { previewPortal = null },
                                                 onPlayLive = { channel ->
-                                                    activeStream = ActivePlayingStream(
-                                                        url = XtreamApi.buildLiveStreamUrl(
-                                                            previewPortal!!.url,
-                                                            previewPortal!!.username,
-                                                            previewPortal!!.pass,
-                                                            channel.stream_id
-                                                        ), title = channel.name
-                                                    )
+                                                    val rawUrl = XtreamApi.buildLiveStreamUrl(previewPortal!!.url, previewPortal!!.username, previewPortal!!.pass, channel.stream_id)
+                                                    val rawProfile = PlaybackLinkParser.parse(rawUrl)
+                                                    val routedProfile = PlaybackMethodRouter.decideAndRoute(rawProfile)
+                                                    activeStream = ActivePlayingStream(profile = routedProfile, title = channel.name)
                                                 },
                                                 onPlayMovie = { movie: VodMovie ->
-                                                    activeStream = ActivePlayingStream(
-                                                        url = XtreamApi.buildMovieStreamUrl(
-                                                            previewPortal!!.url,
-                                                            previewPortal!!.username,
-                                                            previewPortal!!.pass,
-                                                            movie.stream_id,
-                                                            movie.container_extension ?: "mp4"
-                                                        ),
-                                                        title = movie.name,
-                                                        isLiveStream = false
-                                                    )
+                                                    val rawUrl = XtreamApi.buildMovieStreamUrl(previewPortal!!.url, previewPortal!!.username, previewPortal!!.pass, movie.stream_id, movie.container_extension ?: "mp4")
+                                                    val rawProfile = PlaybackLinkParser.parse(rawUrl)
+                                                    val routedProfile = PlaybackMethodRouter.decideAndRoute(rawProfile)
+                                                    activeStream = ActivePlayingStream(profile = routedProfile, title = movie.name, isLiveStream = false)
                                                 },
                                                 onPlaySeries = { seriesItem: SeriesItem ->
-                                                    activeStream = ActivePlayingStream(
-                                                        url = "",
-                                                        title = seriesItem.name,
-                                                        isLiveStream = false
-                                                    )
+                                                    val rawProfile = PlaybackLinkParser.parse("")
+                                                    val routedProfile = PlaybackMethodRouter.decideAndRoute(rawProfile)
+                                                    activeStream = ActivePlayingStream(profile = routedProfile, title = seriesItem.name, isLiveStream = false)
                                                 }
                                             )
                                         } else {
                                             DiscoverScreen(
-                                                accountManager = accountManager,
+                                                accountStorageManager = accountStorageManager,
                                                 onPortalUsed = {
                                                     currentTab = "live_tv"; refreshTrigger++
                                                 },
@@ -443,40 +360,28 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                     "movies" -> MoviesScreen(
-                                        accountManager = accountManager,
+                                        accountStorageManager = accountStorageManager,
                                         onPlayMovie = { movie ->
-                                            if (activeAccount != null) activeStream =
-                                                ActivePlayingStream(
-                                                    url = XtreamApi.buildMovieStreamUrl(
-                                                        activeAccount.url,
-                                                        activeAccount.username,
-                                                        activeAccount.pass,
-                                                        movie.stream_id,
-                                                        movie.container_extension ?: "mp4"
-                                                    ),
-                                                    title = movie.name,
-                                                    isLiveStream = false // Set as VOD
-                                                )
+                                            if (activeAccount != null) {
+                                                val rawUrl = XtreamApi.buildMovieStreamUrl(activeAccount.url, activeAccount.username, activeAccount.pass, movie.stream_id, movie.container_extension ?: "mp4")
+                                                val rawProfile = PlaybackLinkParser.parse(rawUrl)
+                                                val routedProfile = PlaybackMethodRouter.decideAndRoute(rawProfile)
+                                                activeStream = ActivePlayingStream(profile = routedProfile, title = movie.name, isLiveStream = false)
+                                            }
                                         },
                                         onLoginClick = { isAddingAccount = true },
                                         onSwitchPlaylistClick = {
                                             showGlobalAccountSwitcher = true
                                         })
                                     "series" -> SeriesScreen(
-                                        accountManager = accountManager,
+                                        accountStorageManager = accountStorageManager,
                                         onPlayEpisode = { series, episode ->
-                                            if (activeAccount != null) activeStream =
-                                                ActivePlayingStream(
-                                                    url = XtreamApi.buildSeriesStreamUrl(
-                                                        activeAccount.url,
-                                                        activeAccount.username,
-                                                        activeAccount.pass,
-                                                        episode.id,
-                                                        episode.container_extension ?: "mp4"
-                                                    ),
-                                                    title = "${series.name} - E${episode.episode_num}: ${episode.title}",
-                                                    isLiveStream = false // Set as VOD
-                                                )
+                                            if (activeAccount != null) {
+                                                val rawUrl = XtreamApi.buildSeriesStreamUrl(activeAccount.url, activeAccount.username, activeAccount.pass, episode.id, episode.container_extension ?: "mp4")
+                                                val rawProfile = PlaybackLinkParser.parse(rawUrl)
+                                                val routedProfile = PlaybackMethodRouter.decideAndRoute(rawProfile)
+                                                activeStream = ActivePlayingStream(profile = routedProfile, title = "${series.name} - E${episode.episode_num}: ${episode.title}", isLiveStream = false)
+                                            }
                                         },
                                         onLoginClick = { isAddingAccount = true },
                                         onSwitchPlaylistClick = {
@@ -490,7 +395,7 @@ class MainActivity : ComponentActivity() {
                     if (showGlobalAccountSwitcher) {
                         AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp), onDismissRequest = { showGlobalAccountSwitcher = false }, title = { Text("Switch Playlist", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp) }, text = {
                             LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                items(accountManager.getAccounts()) { acc -> Card(onClick = { showGlobalAccountSwitcher = false; accountManager.setActiveAccount(acc.id); refreshTrigger++ }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), elevation = CardDefaults.cardElevation(0.dp)) { Text(text = acc.alias.ifEmpty { acc.username }, fontWeight = FontWeight.Medium, modifier = Modifier.padding(16.dp)) } }
+                                items(accountStorageManager.getAccounts()) { acc -> Card(onClick = { showGlobalAccountSwitcher = false; accountStorageManager.setActiveAccount(acc.id); refreshTrigger++ }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp), elevation = CardDefaults.cardElevation(0.dp)) { Text(text = acc.alias.ifEmpty { acc.username }, fontWeight = FontWeight.Medium, modifier = Modifier.padding(16.dp)) } }
                             }
                         }, confirmButton = {})
                     }
@@ -498,24 +403,15 @@ class MainActivity : ComponentActivity() {
                     if (isAddingAccount) {
                         Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                             LoginScreen(
-                                accountManager = accountManager,
+                                accountStorageManager = accountStorageManager,
                                 onLoginSuccess = { isAddingAccount = false; refreshTrigger++ },
                                 onBack = { isAddingAccount = false })
                         }
                     } else if (activeStream != null) {
                         Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                             PlayerScreen(
-                                streamUrl = activeStream!!.url,
+                                initialProfile = activeStream!!.profile,
                                 title = activeStream!!.title,
-                                sources = activeStream!!.sources,
-                                unifiedSources = activeStream!!.unifiedSources,
-                                userAgent = activeStream!!.userAgent,
-                                cookie = activeStream!!.cookie,
-                                keyId = activeStream!!.keyId,
-                                key = activeStream!!.key,
-                                headers = activeStream!!.headers,
-                                settingsManager = settingsManager,
-                                isLiveStream = activeStream!!.isLiveStream, // Parameter supplied correctly
                                 onBack = { activeStream = null }
                             )
                         }

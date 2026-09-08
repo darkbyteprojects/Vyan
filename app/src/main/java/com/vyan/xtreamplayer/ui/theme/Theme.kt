@@ -14,8 +14,8 @@ private val PremiumDarkColorScheme = darkColorScheme(
     background = PremiumBackground,
     surface = PremiumSurface,
     surfaceVariant = PremiumSurfaceVariant,
-    primary = PremiumAccent,
-    onPrimary = PremiumBackground,
+    primary = PremiumBlue,
+    onPrimary = PremiumAccent,
     secondary = PremiumTextSecondary,
     onSecondary = PremiumAccent,
     error = PremiumRed,
@@ -26,7 +26,7 @@ private val PremiumDarkColorScheme = darkColorScheme(
 
 @Composable
 fun XtreamPlayerTheme(
-    darkTheme: Boolean = true, // Force dark theme for premium cinematic feel
+    darkTheme: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val colorScheme = PremiumDarkColorScheme
@@ -35,15 +35,16 @@ fun XtreamPlayerTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.background.toArgb()
-            window.navigationBarColor = colorScheme.background.toArgb()
+            window.statusBarColor = android.graphics.Color.TRANSPARENT
+            window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            WindowCompat.setDecorFitsSystemWindows(window, false)
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
         }
     }
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography, // Assuming you have a Typography file
+        typography = Typography,
         content = content
     )
 }

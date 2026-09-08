@@ -46,7 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vyan.xtreamplayer.core.ExtremeSourceRegistry
 import com.vyan.xtreamplayer.core.ThemePalettes
-import com.vyan.xtreamplayer.data.managers.AccountManager
+import com.vyan.xtreamplayer.data.managers.AccountStorageManager
 import com.vyan.xtreamplayer.data.managers.SettingsManager
 import com.vyan.xtreamplayer.data.managers.UserCustomCategory
 import com.vyan.xtreamplayer.data.managers.DataCache
@@ -87,26 +87,31 @@ fun parseCustomCategoryFile(text: String): List<UserCustomCategory> {
 
 @Composable
 fun SettingsSectionHeader(title: String, icon: ImageVector) {
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumSurface = Color(0xFF18181B)
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 24.dp, bottom = 12.dp)) {
-        Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(premiumSurface), contentAlignment = Alignment.Center) { Icon(icon, null, tint = premiumAccent, modifier = Modifier.size(18.dp)) }
+    // Telegram-Style Glass Palette
+    val premiumAccent = Color(0xFFFFFFFF)
+    val premiumSurface = Color(0xFF17212B)
+    val premiumBlue = Color(0xFF5288C1)
+
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 20.dp, bottom = 10.dp)) {
+        Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(premiumSurface), contentAlignment = Alignment.Center) { Icon(icon, null, tint = premiumBlue, modifier = Modifier.size(16.dp)) }
         Spacer(modifier = Modifier.width(12.dp))
-        Text(title, color = premiumAccent, fontSize = 18.sp, fontWeight = FontWeight.Black)
+        Text(title, color = premiumAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold)
     }
 }
 
 @Composable
-fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountManager, onAddAccountClick: () -> Unit, onAccountSwitched: () -> Unit) {
-    val premiumBg = Color(0xFF09090B)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumTextSec = Color(0xFFA1A1AA)
-    val premiumRed = Color(0xFFE50914)
+fun SettingsScreen(settingsManager: SettingsManager, accountStorageManager: AccountStorageManager, onAddAccountClick: () -> Unit, onAccountSwitched: () -> Unit) {
+    val premiumBg = Color(0xFF0E1621)
+    val premiumSurface = Color(0xFF17212B)
+    val premiumSurfaceVariant = Color(0xFF242F3D)
+    val premiumAccent = Color(0xFFFFFFFF)
+    val premiumTextSec = Color(0xFF7F91A4)
+    val premiumRed = Color(0xFFE53935)
+    val premiumBlue = Color(0xFF5288C1)
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // PERFECT MEMORY: Remembers the active settings page even if app goes to background
     var currentSettingsPage by rememberSaveable { mutableStateOf("main") }
 
     val sharedPrefs = remember { context.getSharedPreferences("app_settings", Context.MODE_PRIVATE) }
@@ -126,7 +131,7 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
     }
 
     var editingAccount by remember { mutableStateOf<UserAccount?>(null) }
-    var accountsList by remember { mutableStateOf(accountManager.getAccounts()) }
+    var accountsList by remember { mutableStateOf(accountStorageManager.getAccounts()) }
     var editingCustomCategory by remember { mutableStateOf<UserCustomCategory?>(null) }
     var editingProfile by remember { mutableStateOf<com.vyan.xtreamplayer.data.managers.AggregatorProfile?>(null) }
     var showCrashLog by remember { mutableStateOf(false) }
@@ -136,8 +141,8 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
     }
 
     val flatTextFieldColors = TextFieldDefaults.colors(
-        focusedContainerColor = premiumSurface,
-        unfocusedContainerColor = premiumSurface,
+        focusedContainerColor = premiumSurfaceVariant,
+        unfocusedContainerColor = premiumSurfaceVariant,
         focusedIndicatorColor = Color.Transparent,
         unfocusedIndicatorColor = Color.Transparent,
         focusedTextColor = premiumAccent,
@@ -147,41 +152,40 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
     when (currentSettingsPage) {
         "main" -> {
             Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-                    Text("Settings", color = premiumAccent, fontSize = 36.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 8.dp, bottom = 16.dp))
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                    Text("Settings", color = premiumAccent, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp, bottom = 12.dp))
                     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 40.dp)) {
                         item { SettingsSectionHeader("Manage Playlist", Icons.Default.List) }
                         item {
-                            Card(modifier = Modifier.fillMaxWidth().clickable { accountsList = accountManager.getAccounts(); currentSettingsPage = "playlists" }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Playlist List", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp)
+                            Card(modifier = Modifier.fillMaxWidth().clickable { accountsList = accountStorageManager.getAccounts(); currentSettingsPage = "playlists" }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Playlist List", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     Icon(Icons.Default.ChevronRight, null, tint = premiumTextSec)
                                 }
                             }
                         }
-                        item { Spacer(modifier = Modifier.height(16.dp)) }
+                        item { Spacer(modifier = Modifier.height(12.dp)) }
                         item { SettingsSectionHeader("General Settings", Icons.Default.Settings) }
                         item {
-                            Card(modifier = Modifier.fillMaxWidth().clickable { currentSettingsPage = "app_mode" }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                            Card(modifier = Modifier.fillMaxWidth().clickable { currentSettingsPage = "app_mode" }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                     Column {
-                                        Text("App Mode", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp)
-                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("App Mode", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         val activeMode = sharedPrefs.getString("active_app_mode", if (settingsManager.isLiveTvAutomatedMode) "advanced" else "basic") ?: "basic"
-                                        Text(text = when (activeMode) { "unified" -> "Unified Mode Active"; "extreme" -> "Extreme Mode Active"; "sports" -> "Live Sports Mode Active"; "advanced" -> "Advanced Mode Active"; else -> "Basic Mode Active" }, fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold)
+                                        Text(text = when (activeMode) { "unified" -> "Unified Mode Active"; "extreme" -> "Extreme Mode Active"; "sports" -> "Live Sports Mode Active"; "advanced" -> "Advanced Mode Active"; else -> "Basic Mode Active" }, fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.Medium)
                                     }
                                     Icon(Icons.Default.ChevronRight, null, tint = premiumTextSec)
                                 }
                             }
                         }
-                        item { Spacer(modifier = Modifier.height(16.dp)) }
+                        item { Spacer(modifier = Modifier.height(12.dp)) }
 
-                        // NEW: Decoder Engine Configuration Card
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = CardDefaults.cardColors(containerColor = premiumSurface),
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(16.dp),
                                 elevation = CardDefaults.cardElevation(0.dp)
                             ) {
                                 var expandedDecoderMenu by remember { mutableStateOf(false) }
@@ -191,13 +195,13 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable { expandedDecoderMenu = true }
-                                        .padding(20.dp),
+                                        .padding(16.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("Decoder Engine", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp)
-                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("Decoder Engine", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             text = when (currentDecoder) {
                                                 "software" -> "Software Only (FFmpeg / CPU)"
@@ -207,7 +211,7 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                             },
                                             fontSize = 13.sp,
                                             color = premiumTextSec,
-                                            fontWeight = FontWeight.SemiBold
+                                            fontWeight = FontWeight.Medium
                                         )
                                     }
                                     Box {
@@ -218,19 +222,19 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                             modifier = Modifier.background(premiumSurface)
                                         ) {
                                             DropdownMenuItem(
-                                                text = { Text("Auto (Recommended)", color = premiumAccent, fontWeight = FontWeight.SemiBold) },
+                                                text = { Text("Auto (Recommended)", color = premiumAccent, fontWeight = FontWeight.Medium) },
                                                 onClick = { settingsManager.decoderMode = "auto"; expandedDecoderMenu = false }
                                             )
                                             DropdownMenuItem(
-                                                text = { Text("Prefer Software (Fixes Black Screen)", color = premiumAccent, fontWeight = FontWeight.SemiBold) },
+                                                text = { Text("Prefer Software (Fixes Black Screen)", color = premiumAccent, fontWeight = FontWeight.Medium) },
                                                 onClick = { settingsManager.decoderMode = "prefer_software"; expandedDecoderMenu = false }
                                             )
                                             DropdownMenuItem(
-                                                text = { Text("Hardware Only (Battery Saver)", color = premiumAccent, fontWeight = FontWeight.SemiBold) },
+                                                text = { Text("Hardware Only (Battery Saver)", color = premiumAccent, fontWeight = FontWeight.Medium) },
                                                 onClick = { settingsManager.decoderMode = "hardware"; expandedDecoderMenu = false }
                                             )
                                             DropdownMenuItem(
-                                                text = { Text("Software Only", color = premiumAccent, fontWeight = FontWeight.SemiBold) },
+                                                text = { Text("Software Only", color = premiumAccent, fontWeight = FontWeight.Medium) },
                                                 onClick = { settingsManager.decoderMode = "software"; expandedDecoderMenu = false }
                                             )
                                         }
@@ -239,31 +243,31 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                             }
                         }
 
-                        item { Spacer(modifier = Modifier.height(16.dp)) }
+                        item { Spacer(modifier = Modifier.height(12.dp)) }
                         item {
-                            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
-                                Column(modifier = Modifier.padding(20.dp)) {
-                                    Text("Appearance and UI", fontWeight = FontWeight.Black, color = premiumAccent, fontSize = 18.sp, modifier = Modifier.padding(bottom = 20.dp))
-                                    var hideMovies by remember { mutableStateOf(accountManager.isMoviesTabHidden()) }
-                                    var hideSeries by remember { mutableStateOf(accountManager.isSeriesTabHidden()) }
+                            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text("Appearance and UI", fontWeight = FontWeight.Bold, color = premiumAccent, fontSize = 16.sp, modifier = Modifier.padding(bottom = 16.dp))
+                                    var hideMovies by remember { mutableStateOf(accountStorageManager.isMoviesTabHidden()) }
+                                    var hideSeries by remember { mutableStateOf(accountStorageManager.isSeriesTabHidden()) }
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Text("Hide Movies Tab", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                        Switch(checked = hideMovies, onCheckedChange = { hideMovies = it; accountManager.setMoviesTabHidden(it); onAccountSwitched() }, colors = SwitchDefaults.colors(checkedThumbColor = premiumBg, checkedTrackColor = premiumAccent, uncheckedThumbColor = premiumTextSec, uncheckedTrackColor = premiumBg, uncheckedBorderColor = premiumTextSec))
+                                        Text("Hide Movies Tab", color = premiumAccent, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                                        Switch(checked = hideMovies, onCheckedChange = { hideMovies = it; accountStorageManager.setMoviesTabHidden(it); onAccountSwitched() }, colors = SwitchDefaults.colors(checkedThumbColor = premiumAccent, checkedTrackColor = premiumBlue, uncheckedThumbColor = premiumTextSec, uncheckedTrackColor = premiumSurfaceVariant, uncheckedBorderColor = premiumTextSec))
                                     }
-                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Spacer(modifier = Modifier.height(8.dp))
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Text("Hide Series Tab", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                        Switch(checked = hideSeries, onCheckedChange = { hideSeries = it; accountManager.setSeriesTabHidden(it); onAccountSwitched() }, colors = SwitchDefaults.colors(checkedThumbColor = premiumBg, checkedTrackColor = premiumAccent, uncheckedThumbColor = premiumTextSec, uncheckedTrackColor = premiumBg, uncheckedBorderColor = premiumTextSec))
+                                        Text("Hide Series Tab", color = premiumAccent, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                                        Switch(checked = hideSeries, onCheckedChange = { hideSeries = it; accountStorageManager.setSeriesTabHidden(it); onAccountSwitched() }, colors = SwitchDefaults.colors(checkedThumbColor = premiumAccent, checkedTrackColor = premiumBlue, uncheckedThumbColor = premiumTextSec, uncheckedTrackColor = premiumSurfaceVariant, uncheckedBorderColor = premiumTextSec))
                                     }
                                 }
                             }
                         }
-                        item { Spacer(modifier = Modifier.height(16.dp)) }
+                        item { Spacer(modifier = Modifier.height(12.dp)) }
                         item { SettingsSectionHeader("Developer & Debugging", Icons.Default.BugReport) }
                         item {
-                            Card(modifier = Modifier.fillMaxWidth().clickable { showCrashLog = true }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("View Crash Logs", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp)
+                            Card(modifier = Modifier.fillMaxWidth().clickable { showCrashLog = true }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("View Crash Logs", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     Icon(Icons.Default.ChevronRight, null, tint = premiumTextSec)
                                 }
                             }
@@ -287,11 +291,11 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
             val hasAnyNewMode = hasNewExtreme || hasNewUnified
 
             Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp).verticalScroll(rememberScrollState())) {
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
                     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { currentSettingsPage = "main" }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = premiumAccent) }
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text("App Mode", color = premiumAccent, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                        Text("App Mode", color = premiumAccent, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     }
 
                     val modes = mutableListOf(
@@ -321,25 +325,25 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                         },
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = premiumSurface),
-                        shape = RoundedCornerShape(20.dp),
+                        shape = RoundedCornerShape(16.dp),
                         elevation = CardDefaults.cardElevation(0.dp)
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(currentModeDetails.second, color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp)
+                                    Text(currentModeDetails.second, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     if (hasAnyNewMode) {
-                                        Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFE50914)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                            Text("NEW", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                                        Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(premiumBlue).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                            Text("NEW", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(currentModeDetails.third, color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(currentModeDetails.third, color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Icon(Icons.Default.ChevronRight, null, tint = premiumAccent, modifier = Modifier.size(24.dp))
@@ -358,13 +362,13 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                     .fillMaxWidth()
                                     .padding(horizontal = 20.dp)
                                     .padding(bottom = 40.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text(
                                     text = "Select App Mode",
                                     color = premiumAccent,
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Black,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(bottom = 8.dp)
                                 )
 
@@ -391,29 +395,29 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
 
                                             onAccountSwitched()
                                         },
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = if (isSelected) Color(0xFF27272A) else Color(0xFF09090B),
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (isSelected) premiumSurfaceVariant else premiumBg,
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Row(
-                                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                            modifier = Modifier.fillMaxWidth().padding(14.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                    Text(title, color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 17.sp)
+                                                    Text(title, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                                     if (isItemNew) {
-                                                        Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFE50914)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                                            Text("NEW", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                                                        Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(premiumBlue).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                                            Text("NEW", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                                         }
                                                     }
                                                 }
                                                 Spacer(modifier = Modifier.height(2.dp))
-                                                Text(subtitle, color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                                Text(subtitle, color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                             }
                                             if (isSelected) {
-                                                Icon(Icons.Default.Check, null, tint = premiumAccent, modifier = Modifier.size(20.dp))
+                                                Icon(Icons.Default.Check, null, tint = premiumBlue, modifier = Modifier.size(18.dp))
                                             }
                                         }
                                     }
@@ -422,37 +426,37 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     if (activeAppMode == "advanced") {
-                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(24.dp), elevation = CardDefaults.cardElevation(0.dp)) {
-                            Column(modifier = Modifier.padding(20.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth().clickable { currentSettingsPage = "custom_categories" }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth().clickable { currentSettingsPage = "custom_categories" }.padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                     Column {
-                                        Text("Manage Custom Categories", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 16.sp)
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("Build your own dynamic aggregator filters", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold)
+                                        Text("Manage Custom Categories", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text("Build your own dynamic aggregator filters", fontSize = 12.sp, color = premiumTextSec, fontWeight = FontWeight.Medium)
                                     }
                                     Icon(Icons.Default.ChevronRight, null, tint = premiumTextSec)
                                 }
-                                HorizontalDivider(color = Color(0xFF27272A), modifier = Modifier.padding(vertical = 16.dp))
-                                Row(modifier = Modifier.fillMaxWidth().clickable { currentSettingsPage = "profiles" }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                HorizontalDivider(color = premiumSurfaceVariant, modifier = Modifier.padding(vertical = 12.dp))
+                                Row(modifier = Modifier.fillMaxWidth().clickable { currentSettingsPage = "profiles" }.padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                     Column {
-                                        Text("Manage Profiles", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 16.sp)
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("Bind categories to specific playlists", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold)
+                                        Text("Manage Profiles", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text("Bind categories to specific playlists", fontSize = 12.sp, color = premiumTextSec, fontWeight = FontWeight.Medium)
                                     }
                                     Icon(Icons.Default.ChevronRight, null, tint = premiumTextSec)
                                 }
                             }
                         }
                     } else if (activeAppMode == "extreme") {
-                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(24.dp), elevation = CardDefaults.cardElevation(0.dp)) {
-                            Column(modifier = Modifier.padding(20.dp)) {
+                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                            Column(modifier = Modifier.padding(16.dp)) {
                                 var extremeLiveTvBehavior by rememberSaveable { mutableStateOf(sharedPrefs.getString("extreme_livetv_behavior", "extreme") ?: "extreme") }
 
-                                Text("Live TV Tab Behavior", fontWeight = FontWeight.Black, fontSize = 16.sp, color = premiumAccent)
-                                Text("Choose how the standard Live TV tab functions while in Extreme Mode.", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
+                                Text("Live TV Tab Behavior", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = premiumAccent)
+                                Text("Choose how the standard Live TV tab functions while in Extreme Mode.", fontSize = 12.sp, color = premiumTextSec, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
 
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     val options = listOf("basic" to "Basic", "advanced" to "Advanced", "extreme" to "Extreme")
@@ -464,9 +468,9 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                                 sharedPrefs.edit().putString("extreme_livetv_behavior", key).apply()
                                                 onAccountSwitched()
                                             },
-                                            label = { Text(label, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif) },
+                                            label = { Text(label, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif) },
                                             shape = CircleShape,
-                                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumAccent, selectedLabelColor = premiumBg, containerColor = premiumSurface, labelColor = premiumTextSec),
+                                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumBlue, selectedLabelColor = premiumAccent, containerColor = premiumSurfaceVariant, labelColor = premiumTextSec),
                                             border = null
                                         )
                                     }
@@ -474,24 +478,24 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                             }
                         }
                     } else if (activeAppMode == "unified") {
-                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(24.dp), elevation = CardDefaults.cardElevation(0.dp)) {
-                            Column(modifier = Modifier.padding(20.dp)) {
-                                Text("Unified Mode Preferences", fontWeight = FontWeight.Black, fontSize = 16.sp, color = premiumAccent)
-                                Text("Toggle which sources are actively scanned and merged into the Unified Live TV tab.", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp, bottom = 16.dp))
+                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text("Unified Mode Preferences", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = premiumAccent)
+                                Text("Toggle which sources are actively scanned and merged into the Unified Live TV tab.", fontSize = 12.sp, color = premiumTextSec, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
 
                                 var searchConcurrencyLimit by rememberSaveable { mutableIntStateOf(sharedPrefs.getInt("unified_search_concurrency_limit", 1)) }
                                 Row(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                                        Text("Parallel Search Limit", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                        Text("Higher limits search faster but may cause UI lag. Default is 1.", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                        Text("Parallel Search Limit", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                        Text("Higher limits search faster but may cause UI lag.", color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                     }
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(Color(0xFF27272A))
+                                        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(premiumSurfaceVariant)
                                     ) {
                                         IconButton(
                                             onClick = {
@@ -500,16 +504,16 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                                     sharedPrefs.edit().putInt("unified_search_concurrency_limit", searchConcurrencyLimit).apply()
                                                 }
                                             },
-                                            modifier = Modifier.size(36.dp)
+                                            modifier = Modifier.size(32.dp)
                                         ) {
-                                            Icon(Icons.Default.Remove, contentDescription = "Decrease", tint = if (searchConcurrencyLimit > 1) premiumAccent else Color.Gray, modifier = Modifier.size(18.dp))
+                                            Icon(Icons.Default.Remove, contentDescription = "Decrease", tint = if (searchConcurrencyLimit > 1) premiumAccent else Color.Gray, modifier = Modifier.size(16.dp))
                                         }
                                         Text(
                                             text = searchConcurrencyLimit.toString(),
                                             color = premiumAccent,
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Black,
-                                            modifier = Modifier.widthIn(min = 24.dp),
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.widthIn(min = 20.dp),
                                             textAlign = TextAlign.Center
                                         )
                                         IconButton(
@@ -519,20 +523,20 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                                     sharedPrefs.edit().putInt("unified_search_concurrency_limit", searchConcurrencyLimit).apply()
                                                 }
                                             },
-                                            modifier = Modifier.size(36.dp)
+                                            modifier = Modifier.size(32.dp)
                                         ) {
-                                            Icon(Icons.Default.Add, contentDescription = "Increase", tint = if (searchConcurrencyLimit < 10) premiumAccent else Color.Gray, modifier = Modifier.size(18.dp))
+                                            Icon(Icons.Default.Add, contentDescription = "Increase", tint = if (searchConcurrencyLimit < 10) premiumAccent else Color.Gray, modifier = Modifier.size(16.dp))
                                         }
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(16.dp))
-                                HorizontalDivider(color = Color(0xFF27272A))
-                                Spacer(modifier = Modifier.height(8.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
+                                HorizontalDivider(color = premiumSurfaceVariant)
+                                Spacer(modifier = Modifier.height(6.dp))
 
                                 var unifiedUsePortals by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("unified_use_discovered_portals", true)) }
-                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Discovered Portals", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Discovered Portals", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                     Switch(
                                         checked = unifiedUsePortals,
                                         onCheckedChange = {
@@ -540,18 +544,18 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                             sharedPrefs.edit().putBoolean("unified_use_discovered_portals", it).apply()
                                             onAccountSwitched()
                                         },
-                                        colors = SwitchDefaults.colors(checkedThumbColor = premiumBg, checkedTrackColor = premiumAccent, uncheckedThumbColor = premiumTextSec, uncheckedTrackColor = premiumBg, uncheckedBorderColor = premiumTextSec)
+                                        colors = SwitchDefaults.colors(checkedThumbColor = premiumAccent, checkedTrackColor = premiumBlue, uncheckedThumbColor = premiumTextSec, uncheckedTrackColor = premiumSurfaceVariant, uncheckedBorderColor = premiumTextSec)
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text("Standard Playlists", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = premiumTextSec)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text("Standard Playlists", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = premiumTextSec)
                                 var unifiedDisabledPlaylists by remember { mutableStateOf(sharedPrefs.getStringSet("unified_disabled_playlists", emptySet()) ?: emptySet()) }
 
                                 accountsList.forEachIndexed { index, acc ->
                                     val isEnabled = !unifiedDisabledPlaylists.contains(acc.id)
-                                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Text(acc.alias.ifEmpty { "Playlist ${index + 1}" }, color = premiumAccent, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Text(acc.alias.ifEmpty { "Playlist ${index + 1}" }, color = premiumAccent, fontWeight = FontWeight.Medium, fontSize = 14.sp)
                                         Switch(
                                             checked = isEnabled,
                                             onCheckedChange = { checked ->
@@ -560,19 +564,19 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                                 sharedPrefs.edit().putStringSet("unified_disabled_playlists", newSet).apply()
                                                 onAccountSwitched()
                                             },
-                                            colors = SwitchDefaults.colors(checkedThumbColor = premiumBg, checkedTrackColor = premiumAccent, uncheckedThumbColor = premiumTextSec, uncheckedTrackColor = premiumBg, uncheckedBorderColor = premiumTextSec)
+                                            colors = SwitchDefaults.colors(checkedThumbColor = premiumAccent, checkedTrackColor = premiumBlue, uncheckedThumbColor = premiumTextSec, uncheckedTrackColor = premiumSurfaceVariant, uncheckedBorderColor = premiumTextSec)
                                         )
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text("Extreme DRM Sources", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = premiumTextSec)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text("Extreme DRM Sources", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = premiumTextSec)
                                 var unifiedDisabledExtreme by remember { mutableStateOf(sharedPrefs.getStringSet("unified_disabled_extreme_sources", emptySet()) ?: emptySet()) }
 
                                 ExtremeSourceRegistry.ALL_SOURCES.forEach { source ->
                                     val isEnabled = !unifiedDisabledExtreme.contains(source.id)
-                                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Text(source.name, color = premiumAccent, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Text(source.name, color = premiumAccent, fontWeight = FontWeight.Medium, fontSize = 14.sp)
                                         Switch(
                                             checked = isEnabled,
                                             onCheckedChange = { checked ->
@@ -581,7 +585,7 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                                 sharedPrefs.edit().putStringSet("unified_disabled_extreme_sources", newSet).apply()
                                                 onAccountSwitched()
                                             },
-                                            colors = SwitchDefaults.colors(checkedThumbColor = premiumBg, checkedTrackColor = premiumAccent, uncheckedThumbColor = premiumTextSec, uncheckedTrackColor = premiumBg, uncheckedBorderColor = premiumTextSec)
+                                            colors = SwitchDefaults.colors(checkedThumbColor = premiumAccent, checkedTrackColor = premiumBlue, uncheckedThumbColor = premiumTextSec, uncheckedTrackColor = premiumSurfaceVariant, uncheckedBorderColor = premiumTextSec)
                                         )
                                     }
                                 }
@@ -589,7 +593,7 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(40.dp))
+                    Spacer(modifier = Modifier.height(36.dp))
                 }
             }
         }
@@ -597,23 +601,23 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
             var profilesList by remember { mutableStateOf(settingsManager.getProfiles()) }
             var activeProfileId by remember { mutableStateOf(settingsManager.activeProfileId) }
             Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { currentSettingsPage = "app_mode" }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = premiumAccent) }
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text("Manage Profiles", color = premiumAccent, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                        Text("Manage Profiles", color = premiumAccent, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     }
-                    Text("Create profiles to bind Custom Categories to specific playlists or free portals. Select the Radio Button to set the active profile for Advanced TV.", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 24.dp))
-                    LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Create profiles to bind Custom Categories to specific playlists or free portals.", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(bottom = 20.dp))
+                    LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(profilesList, key = { it.id }) { prof ->
-                            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    RadioButton(selected = activeProfileId == prof.id, onClick = { activeProfileId = prof.id; settingsManager.activeProfileId = prof.id; onAccountSwitched() }, colors = RadioButtonDefaults.colors(selectedColor = premiumAccent, unselectedColor = premiumTextSec))
+                            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = activeProfileId == prof.id, onClick = { activeProfileId = prof.id; settingsManager.activeProfileId = prof.id; onAccountSwitched() }, colors = RadioButtonDefaults.colors(selectedColor = premiumBlue, unselectedColor = premiumTextSec))
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Column(modifier = Modifier.weight(1f).clickable { editingProfile = prof; currentSettingsPage = "edit_profile" }) {
-                                        Text(prof.name, color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp)
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("${if (prof.useFreePortals) "Free Portals + " else ""}${prof.playlistIds.size} Playlists • ${if (prof.categoryIds.isEmpty()) "All Categories" else "${prof.categoryIds.size} Categories"}", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(prof.name, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text("${if (prof.useFreePortals) "Free Portals + " else ""}${prof.playlistIds.size} Playlists • ${if (prof.categoryIds.isEmpty()) "All Categories" else "${prof.categoryIds.size} Categories"}", color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                     }
                                     if (prof.id != "default") {
                                         IconButton(onClick = { settingsManager.deleteProfile(prof.id); profilesList = settingsManager.getProfiles(); activeProfileId = settingsManager.activeProfileId }) {
@@ -625,8 +629,8 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = { editingProfile = null; currentSettingsPage = "edit_profile" }, modifier = Modifier.fillMaxWidth().height(64.dp).navigationBarsPadding().padding(bottom = 8.dp), shape = RoundedCornerShape(20.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumAccent, contentColor = premiumBg)) {
-                        Text("Build New Profile", fontWeight = FontWeight.Black, fontSize = 18.sp, fontFamily = FontFamily.SansSerif)
+                    Button(onClick = { editingProfile = null; currentSettingsPage = "edit_profile" }, modifier = Modifier.fillMaxWidth().height(56.dp).navigationBarsPadding().padding(bottom = 8.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumBlue, contentColor = premiumAccent)) {
+                        Text("Build New Profile", fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = FontFamily.SansSerif)
                     }
                 }
             }
@@ -641,9 +645,9 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
 
             Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    Row(modifier = Modifier.fillMaxWidth().background(premiumBg).padding(horizontal = 20.dp, vertical = 24.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(modifier = Modifier.fillMaxWidth().background(premiumBg).padding(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { currentSettingsPage = "profiles" }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = premiumAccent) }
-                        Text(if (editingProfile == null) "New Profile" else "Edit Profile", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                        Text(if (editingProfile == null) "New Profile" else "Edit Profile", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                         IconButton(
                             onClick = {
                                 val newProf = com.vyan.xtreamplayer.data.managers.AggregatorProfile(
@@ -660,48 +664,48 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                 currentSettingsPage = "profiles"
                                 onAccountSwitched()
                             },
-                            modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumAccent)
-                        ) { Icon(Icons.Default.Check, "Save", tint = premiumBg) }
+                            modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumBlue)
+                        ) { Icon(Icons.Default.Check, "Save", tint = premiumAccent) }
                     }
-                    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
+                    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
                         if (errorMsg != null) Text(errorMsg!!, color = premiumRed, modifier = Modifier.padding(bottom = 16.dp), fontWeight = FontWeight.Bold)
-                        TextField(value = profileName, onValueChange = { profileName = it }, placeholder = { Text("Profile Name", color = premiumTextSec, fontWeight = FontWeight.SemiBold) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), singleLine = true, colors = flatTextFieldColors)
-                        Spacer(modifier = Modifier.height(32.dp))
-                        Text("1. Select Sources (Portals/Playlists)", fontWeight = FontWeight.Black, fontSize = 18.sp, color = premiumAccent)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), elevation = CardDefaults.cardElevation(0.dp), shape = RoundedCornerShape(20.dp)) {
-                            Row(modifier = Modifier.fillMaxWidth().clickable { useFreePortals = !useFreePortals }.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(checked = useFreePortals, onCheckedChange = { useFreePortals = it }, colors = CheckboxDefaults.colors(checkedColor = premiumAccent, checkmarkColor = premiumBg, uncheckedColor = premiumTextSec))
-                                Spacer(modifier = Modifier.width(16.dp))
+                        TextField(value = profileName, onValueChange = { profileName = it }, placeholder = { Text("Profile Name", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), singleLine = true, colors = flatTextFieldColors)
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Text("1. Select Sources (Portals/Playlists)", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = premiumAccent)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), elevation = CardDefaults.cardElevation(0.dp), shape = RoundedCornerShape(16.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth().clickable { useFreePortals = !useFreePortals }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = useFreePortals, onCheckedChange = { useFreePortals = it }, colors = CheckboxDefaults.colors(checkedColor = premiumBlue, checkmarkColor = premiumAccent, uncheckedColor = premiumTextSec))
+                                Spacer(modifier = Modifier.width(14.dp))
                                 Column {
-                                    Text("Free Portals", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                    Text("Scraped from Discover tab", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("Free Portals", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Text("Scraped from Discover tab", color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
                             accountsList.forEach { acc ->
-                                HorizontalDivider(color = Color(0xFF27272A))
-                                Row(modifier = Modifier.fillMaxWidth().clickable { selectedPlaylists = if (selectedPlaylists.contains(acc.id)) selectedPlaylists - acc.id else selectedPlaylists + acc.id }.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(checked = selectedPlaylists.contains(acc.id), onCheckedChange = { selectedPlaylists = if (it) selectedPlaylists + acc.id else selectedPlaylists - acc.id }, colors = CheckboxDefaults.colors(checkedColor = premiumAccent, checkmarkColor = premiumBg, uncheckedColor = premiumTextSec))
-                                    Spacer(modifier = Modifier.width(16.dp))
-                                    Text(acc.alias.ifEmpty { acc.username }, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                HorizontalDivider(color = premiumSurfaceVariant)
+                                Row(modifier = Modifier.fillMaxWidth().clickable { selectedPlaylists = if (selectedPlaylists.contains(acc.id)) selectedPlaylists - acc.id else selectedPlaylists + acc.id }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = selectedPlaylists.contains(acc.id), onCheckedChange = { selectedPlaylists = if (it) selectedPlaylists + acc.id else selectedPlaylists - acc.id }, colors = CheckboxDefaults.colors(checkedColor = premiumBlue, checkmarkColor = premiumAccent, uncheckedColor = premiumTextSec))
+                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Text(acc.alias.ifEmpty { acc.username }, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 }
                             }
                         }
-                        Spacer(modifier = Modifier.height(32.dp))
-                        Text("2. Select Categories", fontWeight = FontWeight.Black, fontSize = 18.sp, color = premiumAccent)
-                        Text("If none selected, ALL categories will be shown.", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), elevation = CardDefaults.cardElevation(0.dp), shape = RoundedCornerShape(20.dp)) {
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Text("2. Select Categories", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = premiumAccent)
+                        Text("If none selected, ALL categories will be shown.", color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = premiumSurface), elevation = CardDefaults.cardElevation(0.dp), shape = RoundedCornerShape(16.dp)) {
                             customCategoriesList.forEachIndexed { index, cat ->
-                                if (index > 0) HorizontalDivider(color = Color(0xFF27272A))
-                                Row(modifier = Modifier.fillMaxWidth().clickable { selectedCategories = if (selectedCategories.contains(cat.id)) selectedCategories - cat.id!! else selectedCategories + cat.id!! }.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(checked = selectedCategories.contains(cat.id), onCheckedChange = { if (it) selectedCategories = selectedCategories + cat.id!! else selectedCategories = selectedCategories - cat.id!! }, colors = CheckboxDefaults.colors(checkedColor = premiumAccent, checkmarkColor = premiumBg, uncheckedColor = premiumTextSec))
-                                    Spacer(modifier = Modifier.width(16.dp))
-                                    Text(cat.name ?: "Unknown", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                if (index > 0) HorizontalDivider(color = premiumSurfaceVariant)
+                                Row(modifier = Modifier.fillMaxWidth().clickable { selectedCategories = if (selectedCategories.contains(cat.id)) selectedCategories - cat.id!! else selectedCategories + cat.id!! }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = selectedCategories.contains(cat.id), onCheckedChange = { if (it) selectedCategories = selectedCategories + cat.id!! else selectedCategories = selectedCategories - cat.id!! }, colors = CheckboxDefaults.colors(checkedColor = premiumBlue, checkmarkColor = premiumAccent, uncheckedColor = premiumTextSec))
+                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Text(cat.name ?: "Unknown", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 }
                             }
                         }
-                        Spacer(modifier = Modifier.height(40.dp))
+                        Spacer(modifier = Modifier.height(36.dp))
                     }
                 }
             }
@@ -713,19 +717,18 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
             var showResetDialog by remember { mutableStateOf(false) }
             val gridState = rememberLazyGridState()
 
-            // PERFECT MEMORY: Nested BackHandler intercepts the back button to properly exit edit mode
             BackHandler(enabled = isEditMode) {
                 isEditMode = false
                 selectedCategories = emptySet()
             }
 
             Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                     if (isEditMode) {
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { isEditMode = false; selectedCategories = emptySet() }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) { Icon(Icons.Default.Close, "Close", tint = premiumAccent) }
                             Spacer(modifier = Modifier.width(16.dp))
-                            Text("${selectedCategories.size} selected", color = premiumAccent, fontSize = 24.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                            Text("${selectedCategories.size} selected", color = premiumAccent, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             if (selectedCategories.size == 1) {
                                 val index = customCategoriesList.indexOfFirst { it.id == selectedCategories.first() }
                                 if (index > 0) IconButton(onClick = { val mut = customCategoriesList.toMutableList(); val item = mut.removeAt(index); mut.add(index - 1, item); settingsManager.updateCustomCategoriesOrder(mut); customCategoriesList = mut }) { Icon(Icons.Default.KeyboardArrowUp, "Move Up", tint = premiumAccent) }
@@ -738,29 +741,29 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = { currentSettingsPage = "app_mode" }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = premiumAccent) }
                                 Spacer(modifier = Modifier.width(16.dp))
-                                Text("Categories", color = premiumAccent, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                                Text("Categories", color = premiumAccent, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                             }
                             IconButton(onClick = { showResetDialog = true }) { Icon(Icons.Default.Restore, "Reset", tint = premiumRed) }
                         }
                     }
                     if (customCategoriesList.isEmpty()) {
-                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No custom categories", color = premiumTextSec, fontSize = 18.sp, fontWeight = FontWeight.SemiBold) }
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No custom categories", color = premiumTextSec, fontSize = 16.sp, fontWeight = FontWeight.Medium) }
                     } else {
-                        LazyVerticalGrid(columns = GridCells.Adaptive(minSize = 160.dp), state = gridState, horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
+                        LazyVerticalGrid(columns = GridCells.Adaptive(minSize = 160.dp), state = gridState, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
                             items(customCategoriesList, key = { it.id ?: "" }) { cat ->
                                 val gradient = ThemePalettes.all.getOrElse(cat.colorThemeIndex ?: 0) { ThemePalettes.all[0] }
                                 val isSelected = selectedCategories.contains(cat.id ?: "")
                                 Card(
-                                    modifier = Modifier.fillMaxWidth().height(130.dp).border(if (isSelected) 3.dp else 0.dp, if (isSelected) premiumAccent else Color.Transparent, RoundedCornerShape(20.dp))
+                                    modifier = Modifier.fillMaxWidth().height(130.dp).border(if (isSelected) 3.dp else 0.dp, if (isSelected) premiumBlue else Color.Transparent, RoundedCornerShape(16.dp))
                                         .combinedClickable(onLongClick = { isEditMode = true; if (cat.id != null) selectedCategories = selectedCategories + cat.id }, onClick = { if (isEditMode) { if (cat.id != null) selectedCategories = if (isSelected) selectedCategories - cat.id else selectedCategories + cat.id } else { editingCustomCategory = cat; currentSettingsPage = "edit_custom_category" } }),
-                                    colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)
+                                    colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)
                                 ) {
                                     Column(modifier = Modifier.fillMaxSize()) {
                                         Box(modifier = Modifier.fillMaxWidth().height(6.dp).background(Brush.horizontalGradient(gradient)))
                                         Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { if (isEditMode) Icon(if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, null, tint = if (isSelected) premiumAccent else premiumTextSec) }
-                                            Text(text = cat.name ?: "Category", color = premiumAccent, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 20.sp)
-                                            Text(text = cat.filters?.split(",")?.firstOrNull() ?: "Global", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { if (isEditMode) Icon(if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, null, tint = if (isSelected) premiumBlue else premiumTextSec) }
+                                            Text(text = cat.name ?: "Category", color = premiumAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 20.sp)
+                                            Text(text = cat.filters?.split(",")?.firstOrNull() ?: "Global", color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                         }
                                     }
                                 }
@@ -768,18 +771,18 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = { editingCustomCategory = null; currentSettingsPage = "edit_custom_category" }, modifier = Modifier.fillMaxWidth().height(64.dp).navigationBarsPadding().padding(bottom = 8.dp), shape = RoundedCornerShape(20.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumAccent, contentColor = premiumBg)) {
-                        Text("Build New Category", fontWeight = FontWeight.Black, fontSize = 18.sp, fontFamily = FontFamily.SansSerif)
+                    Button(onClick = { editingCustomCategory = null; currentSettingsPage = "edit_custom_category" }, modifier = Modifier.fillMaxWidth().height(56.dp).navigationBarsPadding().padding(bottom = 8.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumBlue, contentColor = premiumAccent)) {
+                        Text("Build New Category", fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = FontFamily.SansSerif)
                     }
                 }
             }
             if (showResetDialog) {
                 AlertDialog(
-                    containerColor = premiumSurface, shape = RoundedCornerShape(24.dp), onDismissRequest = { showResetDialog = false },
-                    title = { Text("Reset to Defaults?", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 22.sp, fontFamily = FontFamily.SansSerif) },
-                    text = { Text("This will permanently delete all your custom built categories and restore the original factory list.", color = premiumTextSec, fontWeight = FontWeight.SemiBold, fontSize = 15.sp) },
-                    confirmButton = { Button(onClick = { settingsManager.resetToDefaultCategories(); customCategoriesList = settingsManager.getCustomCategories(); showResetDialog = false; onAccountSwitched() }, colors = ButtonDefaults.buttonColors(containerColor = premiumRed, contentColor = premiumAccent)) { Text("Reset", fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif) } },
-                    dismissButton = { TextButton(onClick = { showResetDialog = false }) { Text("Cancel", color = premiumTextSec, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif) } }
+                    containerColor = premiumSurface, shape = RoundedCornerShape(20.dp), onDismissRequest = { showResetDialog = false },
+                    title = { Text("Reset to Defaults?", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 20.sp, fontFamily = FontFamily.SansSerif) },
+                    text = { Text("This will permanently delete all your custom built categories and restore the original factory list.", color = premiumTextSec, fontWeight = FontWeight.Medium, fontSize = 14.sp) },
+                    confirmButton = { Button(onClick = { settingsManager.resetToDefaultCategories(); customCategoriesList = settingsManager.getCustomCategories(); showResetDialog = false; onAccountSwitched() }, colors = ButtonDefaults.buttonColors(containerColor = premiumRed, contentColor = premiumAccent), shape = RoundedCornerShape(12.dp)) { Text("Reset", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif) } },
+                    dismissButton = { TextButton(onClick = { showResetDialog = false }) { Text("Cancel", color = premiumTextSec, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif) } }
                 )
             }
         }
@@ -810,9 +813,9 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
 
             Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    Row(modifier = Modifier.fillMaxWidth().background(premiumBg).padding(horizontal = 20.dp, vertical = 24.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(modifier = Modifier.fillMaxWidth().background(premiumBg).padding(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { currentSettingsPage = "custom_categories" }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = premiumAccent) }
-                        Text(if (editingCustomCategory == null) "New Category" else "Edit Category", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                        Text(if (editingCustomCategory == null) "New Category" else "Edit Category", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                         IconButton(
                             onClick = {
                                 if (catName.isBlank() || catKeywords.isBlank() || catFilters.isBlank()) { errorMsg = "Name, Keywords, and Filters are required."; return@IconButton }
@@ -829,120 +832,103 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
                                 currentSettingsPage = "custom_categories"
                                 onAccountSwitched()
                             },
-                            modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumAccent)
-                        ) { Icon(Icons.Default.Check, "Save", tint = premiumBg) }
+                            modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumBlue)
+                        ) { Icon(Icons.Default.Check, "Save", tint = premiumAccent) }
                     }
 
-                    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-                        Text("Live Preview", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 12.dp))
+                    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+                        Text("Live Preview", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(bottom = 12.dp))
                         Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Card(modifier = Modifier.width(180.dp).height(130.dp), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                            Card(modifier = Modifier.width(180.dp).height(130.dp), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                                 Column(modifier = Modifier.fillMaxSize()) {
                                     Box(modifier = Modifier.fillMaxWidth().height(6.dp).background(Brush.horizontalGradient(ThemePalettes.all.getOrElse(selectedColorIndex) { ThemePalettes.all[0] })))
                                     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
-                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { Icon(Icons.Default.PlayCircleFilled, null, tint = premiumAccent, modifier = Modifier.size(24.dp)) }
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { Icon(Icons.Default.PlayCircleFilled, null, tint = premiumBlue, modifier = Modifier.size(24.dp)) }
                                         Column {
-                                            Text(catName.ifEmpty { "Category Name" }, color = premiumAccent, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(catFilters.split(",").firstOrNull()?.ifEmpty { "Filter" } ?: "Filter", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                            Text(catName.ifEmpty { "Category Name" }, color = premiumAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(catFilters.split(",").firstOrNull()?.ifEmpty { "Filter" } ?: "Filter", color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                         }
                                     }
                                 }
                             }
                         }
-                        Spacer(modifier = Modifier.height(32.dp))
+                        Spacer(modifier = Modifier.height(24.dp))
                         if (errorMsg != null) Text(errorMsg!!, color = premiumRed, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
                         if (successMsg != null) Text(successMsg!!, color = Color(0xFF10B981), fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
 
-                        TextField(value = catName, onValueChange = { catName = it }, placeholder = { Text("Category Name", color = premiumTextSec, fontWeight = FontWeight.SemiBold) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), singleLine = true, colors = flatTextFieldColors)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        TextField(value = catFilters, onValueChange = { catFilters = it }, placeholder = { Text("Filters (e.g. US, UK, Sports)", color = premiumTextSec, fontWeight = FontWeight.SemiBold) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), singleLine = true, colors = flatTextFieldColors)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        TextField(value = catKeywords, onValueChange = { catKeywords = it }, placeholder = { Text("Keywords (comma separated)", color = premiumTextSec, fontWeight = FontWeight.SemiBold) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        TextField(value = catExclude, onValueChange = { catExclude = it }, placeholder = { Text("Exclude Words (Optional)", color = premiumTextSec, fontWeight = FontWeight.SemiBold) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors)
+                        TextField(value = catName, onValueChange = { catName = it }, placeholder = { Text("Category Name", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), singleLine = true, colors = flatTextFieldColors)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        TextField(value = catFilters, onValueChange = { catFilters = it }, placeholder = { Text("Filters (e.g. US, UK, Sports)", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), singleLine = true, colors = flatTextFieldColors)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        TextField(value = catKeywords, onValueChange = { catKeywords = it }, placeholder = { Text("Keywords (comma separated)", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        TextField(value = catExclude, onValueChange = { catExclude = it }, placeholder = { Text("Exclude Words (Optional)", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors)
 
-                        Spacer(modifier = Modifier.height(32.dp))
-                        Text("Select Theme Color", fontWeight = FontWeight.Black, fontSize = 18.sp, color = premiumAccent)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Text("Select Theme Color", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = premiumAccent)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(ThemePalettes.all.size) { idx ->
                                 val isSelected = selectedColorIndex == idx
                                 Box(
-                                    modifier = Modifier.size(56.dp).clip(CircleShape).background(Brush.horizontalGradient(ThemePalettes.all[idx])).border(if (isSelected) 4.dp else 0.dp, if (isSelected) premiumAccent else Color.Transparent, CircleShape).clickable { selectedColorIndex = idx },
+                                    modifier = Modifier.size(48.dp).clip(CircleShape).background(Brush.horizontalGradient(ThemePalettes.all[idx])).border(if (isSelected) 3.dp else 0.dp, if (isSelected) premiumAccent else Color.Transparent, CircleShape).clickable { selectedColorIndex = idx },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (isSelected) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(24.dp))
+                                    if (isSelected) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(20.dp))
                                 }
                             }
                         }
 
                         if (editingCustomCategory == null) {
-                            Spacer(modifier = Modifier.height(48.dp))
-                            HorizontalDivider(color = Color(0xFF27272A))
-                            Spacer(modifier = Modifier.height(32.dp))
-                            Button(onClick = { errorMsg = null; successMsg = null; filePicker.launch("text/*") }, modifier = Modifier.fillMaxWidth().height(64.dp), shape = RoundedCornerShape(20.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumSurface, contentColor = premiumAccent)) {
-                                Icon(Icons.Default.UploadFile, null, modifier = Modifier.size(24.dp))
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text("Upload File Format (.txt)", fontWeight = FontWeight.Black, fontSize = 16.sp, fontFamily = FontFamily.SansSerif)
+                            Spacer(modifier = Modifier.height(36.dp))
+                            HorizontalDivider(color = premiumSurfaceVariant)
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Button(onClick = { errorMsg = null; successMsg = null; filePicker.launch("text/*") }, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumSurface, contentColor = premiumAccent)) {
+                                Icon(Icons.Default.UploadFile, null, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Upload File Format (.txt)", fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = FontFamily.SansSerif)
                             }
-                            Spacer(modifier = Modifier.height(20.dp))
-                            Text("Example .txt format:", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                """
-                                HardcodedChannel(
-                                  id = "my_id",
-                                  name = "My Category",
-                                  keywords = listOf("espn", "fox"),
-                                  exclude = emptyList(),
-                                  filters = listOf("US")
-                                )
-                                """.trimIndent(),
-                                color = premiumTextSec,
-                                fontSize = 13.sp,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.padding(top = 12.dp).clip(RoundedCornerShape(12.dp)).background(premiumSurface).padding(16.dp).fillMaxWidth()
-                            )
                         }
-                        Spacer(modifier = Modifier.height(60.dp))
+                        Spacer(modifier = Modifier.height(48.dp))
                     }
                 }
             }
         }
         "playlists" -> {
             Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { currentSettingsPage = "main" }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = premiumAccent) }
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text("Playlist List", color = premiumAccent, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                        Text("Playlist List", color = premiumAccent, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     }
 
                     if (accountsList.isEmpty()) {
-                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No playlists saved yet", color = premiumTextSec, fontSize = 18.sp, fontWeight = FontWeight.SemiBold) }
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No playlists saved yet", color = premiumTextSec, fontSize = 16.sp, fontWeight = FontWeight.Medium) }
                     } else {
-                        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             items(items = accountsList, key = { it.id }) { acc ->
-                                Card(onClick = { editingAccount = acc; currentSettingsPage = "edit_playlist" }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
-                                    Row(modifier = Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                Card(onClick = { editingAccount = acc; currentSettingsPage = "edit_playlist" }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(premiumBg), contentAlignment = Alignment.Center) { Icon(Icons.Default.List, null, tint = premiumTextSec, modifier = Modifier.size(24.dp)) }
-                                            Spacer(modifier = Modifier.width(16.dp))
+                                            Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(premiumBg), contentAlignment = Alignment.Center) { Icon(Icons.Default.List, null, tint = premiumTextSec, modifier = Modifier.size(22.dp)) }
+                                            Spacer(modifier = Modifier.width(14.dp))
                                             Column {
-                                                Text(acc.alias.ifEmpty { acc.username }, color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                Text(if (acc.type == AccountType.XTREAM) acc.url else if (acc.type == AccountType.M3U_URL) acc.url else "Local M3U File", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text(acc.alias.ifEmpty { acc.username }, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(if (acc.type == AccountType.XTREAM) acc.url else if (acc.type == AccountType.M3U_URL) acc.url else "Local M3U File", color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             }
                                         }
-                                        IconButton(onClick = { DataCache.removePortalData(context, acc.url, acc.username); accountManager.removeAccount(acc); accountsList = accountManager.getAccounts(); onAccountSwitched() }, modifier = Modifier.clip(CircleShape).background(Color(0xFF27272A))) { Icon(Icons.Default.Delete, "Delete", tint = premiumRed, modifier = Modifier.size(24.dp)) }
+                                        IconButton(onClick = { DataCache.removePortalData(context, acc.url, acc.username); accountStorageManager.removeAccount(acc); accountsList = accountStorageManager.getAccounts(); onAccountSwitched() }, modifier = Modifier.clip(CircleShape).background(premiumSurfaceVariant)) { Icon(Icons.Default.Delete, "Delete", tint = premiumRed, modifier = Modifier.size(22.dp)) }
                                     }
                                 }
                             }
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = { onAddAccountClick() }, modifier = Modifier.fillMaxWidth().height(64.dp).navigationBarsPadding().padding(bottom = 8.dp), shape = RoundedCornerShape(20.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumAccent, contentColor = premiumBg)) {
-                        Text("Add New Playlist", fontWeight = FontWeight.Black, fontSize = 18.sp, fontFamily = FontFamily.SansSerif)
+                    Button(onClick = { onAddAccountClick() }, modifier = Modifier.fillMaxWidth().height(56.dp).navigationBarsPadding().padding(bottom = 8.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumBlue, contentColor = premiumAccent)) {
+                        Text("Add New Playlist", fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = FontFamily.SansSerif)
                     }
                 }
             }
@@ -957,30 +943,30 @@ fun SettingsScreen(settingsManager: SettingsManager, accountManager: AccountMana
 
                 Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
                     Column(modifier = Modifier.fillMaxSize()) {
-                        Row(modifier = Modifier.fillMaxWidth().background(premiumBg).padding(horizontal = 20.dp, vertical = 24.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(modifier = Modifier.fillMaxWidth().background(premiumBg).padding(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { currentSettingsPage = "playlists" }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = premiumAccent) }
-                            Text("Edit Playlist", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                            Text("Edit Playlist", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                             IconButton(
                                 onClick = {
                                     val updatedAccount = editingAccount!!.copy(alias = editAlias, url = editServer, username = editUsername, pass = editPass)
-                                    accountManager.updateAccount(updatedAccount)
-                                    accountsList = accountManager.getAccounts()
+                                    accountStorageManager.updateAccount(updatedAccount)
+                                    accountsList = accountStorageManager.getAccounts()
                                     currentSettingsPage = "playlists"
                                     onAccountSwitched()
                                 },
-                                modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumAccent)
-                            ) { Icon(Icons.Default.Check, "Save", tint = premiumBg) }
+                                modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumBlue)
+                            ) { Icon(Icons.Default.Check, "Save", tint = premiumAccent) }
                         }
-                        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
-                            TextField(value = editAlias, onValueChange = { editAlias = it }, placeholder = { Text("Playlist Alias", color = premiumTextSec, fontWeight = FontWeight.SemiBold) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors, singleLine = true)
-                            Spacer(modifier = Modifier.height(20.dp))
+                        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+                            TextField(value = editAlias, onValueChange = { editAlias = it }, placeholder = { Text("Playlist Alias", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors, singleLine = true)
+                            Spacer(modifier = Modifier.height(16.dp))
                             if (editingAccount!!.type == AccountType.XTREAM) {
-                                TextField(value = editServer, onValueChange = { editServer = it }, placeholder = { Text("Server URL", color = premiumTextSec, fontWeight = FontWeight.SemiBold) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors, singleLine = true)
-                                Spacer(modifier = Modifier.height(20.dp))
-                                TextField(value = editUsername, onValueChange = { editUsername = it }, placeholder = { Text("Username", color = premiumTextSec, fontWeight = FontWeight.SemiBold) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors, singleLine = true)
-                                Spacer(modifier = Modifier.height(20.dp))
+                                TextField(value = editServer, onValueChange = { editServer = it }, placeholder = { Text("Server URL", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors, singleLine = true)
+                                Spacer(modifier = Modifier.height(16.dp))
+                                TextField(value = editUsername, onValueChange = { editUsername = it }, placeholder = { Text("Username", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors, singleLine = true)
+                                Spacer(modifier = Modifier.height(16.dp))
                                 TextField(
-                                    value = editPass, onValueChange = { editPass = it }, placeholder = { Text("Password", color = premiumTextSec, fontWeight = FontWeight.SemiBold) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors, singleLine = true,
+                                    value = editPass, onValueChange = { editPass = it }, placeholder = { Text("Password", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = flatTextFieldColors, singleLine = true,
                                     visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                                     trailingIcon = { IconButton(onClick = { showPassword = !showPassword }) { Icon(if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = "Toggle Password", tint = premiumTextSec) } }
                                 )

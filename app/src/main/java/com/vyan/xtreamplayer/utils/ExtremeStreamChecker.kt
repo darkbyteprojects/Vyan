@@ -30,7 +30,8 @@ object ExtremeStreamChecker {
             LocalStreamProxy.start()
 
             val headersMap = buildRequestHeaders(channel, rawUrl)
-            val proxyUrl = LocalStreamProxy.createProxyUrl(cleanUrl, headersMap)
+            // THE FIX: Added "UNI" as the required lane parameter
+            val proxyUrl = LocalStreamProxy.createProxyUrl(cleanUrl, headersMap, "UNI")
 
             checkProxyStream(proxyUrl)
         } catch (_: Exception) {
@@ -132,7 +133,7 @@ object ExtremeStreamChecker {
 
             if (contentType.contains("mpegurl") || proxyChunkUrl.contains(".m3u8")) {
                 val subManifest = chunkResp.body?.string() ?: ""
-                chunkResp.close() // Close immediately before recursive call
+                chunkResp.close()
 
                 val subSegment = subManifest.lines().map { it.trim() }.firstOrNull { !it.startsWith("#") && it.isNotEmpty() } ?: return false
                 return verifyChunkBinaryStream(subSegment)
@@ -152,7 +153,6 @@ object ExtremeStreamChecker {
             val chunkBytes = buffer.copyOf(totalRead)
             val headStr = String(chunkBytes.take(64).toByteArray()).lowercase()
 
-            // Strict checking to ensure we didn't receive a disguised HTML error page
             !headStr.contains("<html") && !headStr.contains("<!doctype") && !headStr.contains("{\"") && !headStr.contains("<?xml")
         } catch (_: Exception) {
             false

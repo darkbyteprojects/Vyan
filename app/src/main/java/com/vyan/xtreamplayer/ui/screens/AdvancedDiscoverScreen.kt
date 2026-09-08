@@ -48,7 +48,7 @@ import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import com.vyan.xtreamplayer.data.managers.AccountManager
+import com.vyan.xtreamplayer.data.managers.AccountStorageManager
 import com.vyan.xtreamplayer.models.AccountType
 import com.vyan.xtreamplayer.network.CatalogSource
 import com.vyan.xtreamplayer.data.managers.DataCache
@@ -60,8 +60,8 @@ import com.vyan.xtreamplayer.utils.NetworkClient
 val portalExpiryCache = ConcurrentHashMap<String, String>()
 
 @Composable
-fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel(), accountManager: AccountManager, onPortalUsed: () -> Unit, onPreviewPortal: (ScrapedPortal) -> Unit) {
-    val premiumBg = Color(0xFF09090B); val premiumSurface = Color(0xFF18181B); val premiumAccent = Color(0xFFFAFAFA); val premiumTextSec = Color(0xFFA1A1AA); val premiumRed = Color(0xFFE50914)
+fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel(), accountStorageManager: AccountStorageManager, onPortalUsed: () -> Unit, onPreviewPortal: (ScrapedPortal) -> Unit) {
+    val premiumBg = Color(0xFF0E1621); val premiumSurface = Color(0xFF17212B); val premiumSurfaceVariant = Color(0xFF242F3D); val premiumAccent = Color(0xFFFFFFFF); val premiumTextSec = Color(0xFF7F91A4); val premiumRed = Color(0xFFE53935); val premiumBlue = Color(0xFF5288C1)
     val context = LocalContext.current; val clipboard = LocalClipboardManager.current
     val prefs = context.getSharedPreferences("DiscoverPrefs", Context.MODE_PRIVATE)
     val deletedPrefs = context.getSharedPreferences("DeletedPortalsPrefs", Context.MODE_PRIVATE)
@@ -105,27 +105,27 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel(), accountManager: A
     }
 
     Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
 
             Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp).animateContentSize()) {
                 if (isSearchExpanded) {
                     TextField(
                         value = searchQuery, onValueChange = { searchQuery = it }, modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Search portals or usernames...", color = premiumTextSec, fontSize = 15.sp) },
-                        leadingIcon = { IconButton(onClick = { isSearchExpanded = false; searchQuery = "" }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = premiumAccent) } },
-                        trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumAccent) } },
-                        shape = CircleShape, singleLine = true,
-                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurface, unfocusedContainerColor = premiumSurface, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
+                        leadingIcon = { IconButton(onClick = { isSearchExpanded = false; searchQuery = "" }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = premiumTextSec) } },
+                        trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumTextSec) } },
+                        shape = RoundedCornerShape(16.dp), singleLine = true,
+                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurfaceVariant, unfocusedContainerColor = premiumSurfaceVariant, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
                     )
                 } else {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Discover", color = premiumAccent, fontSize = 32.sp, fontWeight = FontWeight.Black)
+                            Text("Discover", color = premiumAccent, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                             Spacer(modifier = Modifier.height(2.dp))
-                            Text(statusText, color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(statusText, color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         IconButton(onClick = { isSearchExpanded = true }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) {
-                            Icon(Icons.Default.Search, "Search", tint = premiumAccent)
+                            Icon(Icons.Default.Search, "Search", tint = premiumTextSec)
                         }
                     }
                 }
@@ -133,11 +133,11 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel(), accountManager: A
 
             val isEditing = if (selectedFolderUrl == null) isEditModeMain else isEditModeFolder
             if (isEditing && combinedPortals.isNotEmpty()) {
-                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF27272A)).padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).clip(RoundedCornerShape(16.dp)).background(premiumSurfaceVariant).padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = {
                         if (selectedFolderUrl == null) { val allKeys = groupedPortals.map { (u, p) -> if (p.size > 1) "folder_$u" else "portal_${u}|${p.first().username}" }.toSet(); selectedMainItems = if (selectedMainItems.size == allKeys.size) emptySet() else allKeys }
                         else { val currentFolderItems = groupedPortals[selectedFolderUrl]?.map { "${it.url}|${it.username}" }?.toSet() ?: emptySet(); selectedFolderItems = if (selectedFolderItems.size == currentFolderItems.size) emptySet() else currentFolderItems }
-                    }) { Text("Select All", color = premiumAccent, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif) }
+                    }) { Text("Select All", color = premiumBlue, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif) }
                     Text("${if (selectedFolderUrl == null) selectedMainItems.size else selectedFolderItems.size} Selected", color = premiumAccent, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif)
                     IconButton(
                         onClick = {
@@ -202,9 +202,9 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel(), accountManager: A
             if (combinedPortals.isEmpty() && !isScraping) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.TravelExplore, null, tint = premiumTextSec, modifier = Modifier.size(72.dp)); Spacer(modifier = Modifier.height(16.dp))
-                        Text("No Portals Scraped Yet", fontWeight = FontWeight.Black, fontSize = 20.sp, color = premiumAccent); Spacer(modifier = Modifier.height(8.dp))
-                        Text("Tap Scan below to start searching.", fontSize = 15.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold)
+                        Icon(Icons.Default.TravelExplore, null, tint = premiumTextSec.copy(alpha = 0.5f), modifier = Modifier.size(72.dp)); Spacer(modifier = Modifier.height(16.dp))
+                        Text("No Portals Scraped Yet", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = premiumAccent); Spacer(modifier = Modifier.height(8.dp))
+                        Text("Tap Scan below to start searching.", fontSize = 15.sp, color = premiumTextSec, fontWeight = FontWeight.Medium)
                     }
                 }
             } else {
@@ -214,7 +214,7 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel(), accountManager: A
                         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { selectedFolderUrl = null; isEditModeFolder = false; selectedFolderItems = emptySet() }, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = premiumAccent) }
                             Spacer(modifier = Modifier.width(16.dp))
-                            Text(selectedFolderUrl ?: "", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(selectedFolderUrl ?: "", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         LazyColumn(state = folderListState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
                             items(folderPortals) { portal ->
@@ -281,18 +281,18 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel(), accountManager: A
                         )
                     }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { if (isScraping) viewModel.stopScraping() else viewModel.scrape() }, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 4.dp), colors = ButtonDefaults.buttonColors(containerColor = if (isScraping) premiumRed else premiumAccent, contentColor = if (isScraping) premiumAccent else premiumBg)) {
-                            if (isScraping) { Icon(Icons.Default.Stop, null, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("Stop", fontSize = 12.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            else { Icon(Icons.Default.TravelExplore, null, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("Scan", fontSize = 12.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        Button(onClick = { if (isScraping) viewModel.stopScraping() else viewModel.scrape() }, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 4.dp), colors = ButtonDefaults.buttonColors(containerColor = if (isScraping) premiumRed else premiumBlue, contentColor = premiumAccent)) {
+                            if (isScraping) { Icon(Icons.Default.Stop, null, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("Stop", fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            else { Icon(Icons.Default.TravelExplore, null, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("Scan", fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         }
                         Button(onClick = { if (!isScraping) viewModel.getMore() }, modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 4.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumSurface, contentColor = premiumAccent), enabled = !isScraping) {
-                            Icon(Icons.Default.AddCircleOutline, null, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("More", fontSize = 12.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Icon(Icons.Default.AddCircleOutline, null, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("More", fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Button(
                             onClick = { if (!isScraping) { context.getSharedPreferences("PortalExpiryPrefs", Context.MODE_PRIVATE).edit().clear().apply(); viewModel.reverifyPortals() } },
-                            modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 4.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF27272A), contentColor = premiumAccent), enabled = !isScraping && combinedPortals.isNotEmpty()
+                            modifier = Modifier.weight(1f).height(42.dp), shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 4.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumSurfaceVariant, contentColor = premiumAccent), enabled = !isScraping && combinedPortals.isNotEmpty()
                         ) {
-                            Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("Verify", fontSize = 12.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("Verify", fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -302,10 +302,10 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel(), accountManager: A
 
     if (showAddDialog && portalToAdd != null) {
         AlertDialog(
-            containerColor = premiumSurface, shape = RoundedCornerShape(24.dp),
-            onDismissRequest = { showAddDialog = false }, title = { Text("Save to Playlists", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 22.sp, fontFamily = FontFamily.SansSerif) },
-            text = { Column { Text("Enter a name for this portal:", fontSize = 15.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 12.dp)); TextField(value = newPlaylistName, onValueChange = { newPlaylistName = it }, singleLine = true, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(), colors = TextFieldDefaults.colors(focusedContainerColor = premiumBg, unfocusedContainerColor = premiumBg, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)) } },
-            confirmButton = { Button(onClick = { accountManager.addAccount(
+            containerColor = premiumSurface, shape = RoundedCornerShape(20.dp),
+            onDismissRequest = { showAddDialog = false }, title = { Text("Save to Playlists", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 20.sp, fontFamily = FontFamily.SansSerif) },
+            text = { Column { Text("Enter a name for this portal:", fontSize = 14.sp, color = premiumTextSec, fontWeight = FontWeight.Medium, modifier = Modifier.padding(bottom = 12.dp)); TextField(value = newPlaylistName, onValueChange = { newPlaylistName = it }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth(), colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurfaceVariant, unfocusedContainerColor = premiumSurfaceVariant, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)) } },
+            confirmButton = { Button(onClick = { accountStorageManager.addAccount(
                 UserAccount(
                     id = UUID.randomUUID().toString(),
                     alias = newPlaylistName.ifEmpty { portalToAdd!!.username },
@@ -314,37 +314,37 @@ fun DiscoverScreen(viewModel: DiscoverViewModel = viewModel(), accountManager: A
                     url = portalToAdd!!.url,
                     type = AccountType.XTREAM
                 )
-            ); showAddDialog = false; Toast.makeText(context, "Added!", Toast.LENGTH_SHORT).show(); onPortalUsed() }, shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumAccent, contentColor = premiumBg)) { Text("Save", fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif) } },
-            dismissButton = { TextButton(onClick = { showAddDialog = false }) { Text("Cancel", color = premiumTextSec, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif) } }
+            ); showAddDialog = false; Toast.makeText(context, "Added!", Toast.LENGTH_SHORT).show(); onPortalUsed() }, shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumBlue, contentColor = premiumAccent)) { Text("Save", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif) } },
+            dismissButton = { TextButton(onClick = { showAddDialog = false }) { Text("Cancel", color = premiumTextSec, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif) } }
         )
     }
 }
 
 @Composable
 fun FlatSourceChip(label: String, tag: String, selected: Boolean, enabled: Boolean, modifier: Modifier = Modifier, onTap: () -> Unit) {
-    val premiumBg = Color(0xFF09090B); val premiumSurface = Color(0xFF18181B); val premiumAccent = Color(0xFFFAFAFA)
-    val bgColor = if (selected) premiumAccent else premiumSurface; val contentColor = if (selected) premiumBg else premiumAccent; val tagColor = if (selected) premiumBg.copy(alpha = 0.7f) else premiumAccent.copy(alpha = 0.7f)
+    val premiumBg = Color(0xFF0E1621); val premiumSurface = Color(0xFF17212B); val premiumAccent = Color(0xFFFFFFFF); val premiumBlue = Color(0xFF5288C1)
+    val bgColor = if (selected) premiumBlue else premiumSurface; val contentColor = if (selected) premiumAccent else premiumAccent; val tagColor = if (selected) premiumAccent.copy(alpha = 0.7f) else premiumAccent.copy(alpha = 0.7f)
     Box(modifier = modifier.alpha(if (enabled) 1f else 0.5f).clip(RoundedCornerShape(12.dp)).background(bgColor).clickable(enabled = enabled, onClick = onTap).padding(horizontal = 14.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label, color = contentColor, fontSize = 12.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, maxLines = 1)
+            Text(label, color = contentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, maxLines = 1)
             Spacer(modifier = Modifier.width(6.dp))
-            Text(tag, color = tagColor, fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, maxLines = 1)
+            Text(tag, color = tagColor, fontSize = 10.sp, fontWeight = FontWeight.Medium, fontFamily = FontFamily.SansSerif, maxLines = 1)
         }
     }
 }
 
 @Composable
 fun FolderItemCard(url: String, count: Int, isEditMode: Boolean, isSelected: Boolean, onLongClick: () -> Unit, onClick: () -> Unit) {
-    val premiumSurface = Color(0xFF18181B); val premiumAccent = Color(0xFFFAFAFA); val premiumTextSec = Color(0xFFA1A1AA)
-    val borderModifier = if (isSelected) Modifier.border(2.dp, premiumAccent, RoundedCornerShape(16.dp)) else Modifier
+    val premiumSurface = Color(0xFF17212B); val premiumAccent = Color(0xFFFFFFFF); val premiumTextSec = Color(0xFF7F91A4); val premiumBlue = Color(0xFF5288C1)
+    val borderModifier = if (isSelected) Modifier.border(2.dp, premiumBlue, RoundedCornerShape(16.dp)) else Modifier
     Card(modifier = Modifier.fillMaxWidth().then(borderModifier).combinedClickable(onLongClick = { onLongClick() }, onClick = { onClick() }), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = premiumSurface), elevation = CardDefaults.cardElevation(0.dp)) {
         Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (isEditMode) { Icon(imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, contentDescription = null, tint = if (isSelected) premiumAccent else premiumTextSec, modifier = Modifier.padding(end = 16.dp)) }
-            else { Icon(imageVector = Icons.Default.Folder, contentDescription = "Folder", tint = premiumAccent, modifier = Modifier.padding(end = 16.dp).size(24.dp)) }
+            if (isEditMode) { Icon(imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, contentDescription = null, tint = if (isSelected) premiumBlue else premiumTextSec, modifier = Modifier.padding(end = 16.dp)) }
+            else { Icon(imageVector = Icons.Default.Folder, contentDescription = "Folder", tint = premiumBlue, modifier = Modifier.padding(end = 16.dp).size(24.dp)) }
             Column(modifier = Modifier.weight(1f)) {
-                Text(url, color = premiumAccent, fontSize = 16.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(url, color = premiumAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(modifier = Modifier.height(2.dp))
-                Text("$count accounts found", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text("$count accounts found", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             }
             if (!isEditMode) Icon(Icons.Default.KeyboardArrowRight, contentDescription = "Open Folder", tint = premiumTextSec, modifier = Modifier.size(24.dp))
         }
@@ -353,7 +353,7 @@ fun FolderItemCard(url: String, count: Int, isEditMode: Boolean, isSelected: Boo
 
 @Composable
 fun PortalItemCard(portal: ScrapedPortal, isEditMode: Boolean, isSelected: Boolean, isFav: Boolean, onLongClick: () -> Unit, onToggleSelect: () -> Unit, onAddClick: () -> Unit, onPreviewPortal: () -> Unit, onCopyClick: () -> Unit, onFavClick: () -> Unit) {
-    val premiumBg = Color(0xFF09090B); val premiumSurface = Color(0xFF18181B); val premiumAccent = Color(0xFFFAFAFA); val premiumTextSec = Color(0xFFA1A1AA)
+    val premiumBg = Color(0xFF0E1621); val premiumSurface = Color(0xFF17212B); val premiumSurfaceVariant = Color(0xFF242F3D); val premiumAccent = Color(0xFFFFFFFF); val premiumTextSec = Color(0xFF7F91A4); val premiumBlue = Color(0xFF5288C1)
     val context = LocalContext.current; val expiryPrefs = remember { context.getSharedPreferences("PortalExpiryPrefs", Context.MODE_PRIVATE) }; val cacheKey = "${portal.url}|${portal.username}"
     var expDate by remember { mutableStateOf(expiryPrefs.getString(cacheKey, null) ?: "Loading...") }; val scope = rememberCoroutineScope()
 
@@ -375,29 +375,29 @@ fun PortalItemCard(portal: ScrapedPortal, isEditMode: Boolean, isSelected: Boole
         }
     }
 
-    val borderModifier = if (isSelected) Modifier.border(2.dp, premiumAccent, RoundedCornerShape(16.dp)) else Modifier
+    val borderModifier = if (isSelected) Modifier.border(2.dp, premiumBlue, RoundedCornerShape(16.dp)) else Modifier
     Card(modifier = Modifier.fillMaxWidth().then(borderModifier).combinedClickable(onLongClick = { onLongClick() }, onClick = { if (isEditMode) onToggleSelect() else onPreviewPortal() }), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                if (isEditMode) { Icon(if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, contentDescription = null, tint = if (isSelected) premiumAccent else premiumTextSec, modifier = Modifier.padding(end = 12.dp, top = 4.dp)) }
+                if (isEditMode) { Icon(if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, contentDescription = null, tint = if (isSelected) premiumBlue else premiumTextSec, modifier = Modifier.padding(end = 12.dp, top = 4.dp)) }
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(portal.username, fontWeight = FontWeight.Black, fontSize = 16.sp, color = premiumAccent, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(portal.username, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = premiumAccent, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Spacer(modifier = Modifier.height(2.dp))
-                    Text(portal.url, fontSize = 12.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(portal.url, fontSize = 12.sp, color = premiumTextSec, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (!isEditMode) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(Color(0xFF27272A)).clickable { onCopyClick() }, contentAlignment = Alignment.Center) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = premiumAccent, modifier = Modifier.size(16.dp)) }
-                        Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(if (isFav) Color(0xFFFFD700).copy(alpha = 0.1f) else Color(0xFF27272A)).clickable { onFavClick() }, contentAlignment = Alignment.Center) { Icon(if (isFav) Icons.Default.Star else Icons.Default.StarBorder, contentDescription = "Fav", tint = if (isFav) Color(0xFFFFD700) else premiumAccent, modifier = Modifier.size(18.dp)) }
-                        Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(premiumAccent).clickable { onAddClick() }, contentAlignment = Alignment.Center) { Icon(Icons.Default.AddCircleOutline, contentDescription = "Add Playlist", tint = premiumBg, modifier = Modifier.size(18.dp)) }
+                        Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(premiumSurfaceVariant).clickable { onCopyClick() }, contentAlignment = Alignment.Center) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = premiumAccent, modifier = Modifier.size(16.dp)) }
+                        Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(if (isFav) Color(0xFFFFD700).copy(alpha = 0.15f) else premiumSurfaceVariant).clickable { onFavClick() }, contentAlignment = Alignment.Center) { Icon(if (isFav) Icons.Default.Star else Icons.Default.StarBorder, contentDescription = "Fav", tint = if (isFav) Color(0xFFFFD700) else premiumAccent, modifier = Modifier.size(18.dp)) }
+                        Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(premiumBlue).clickable { onAddClick() }, contentAlignment = Alignment.Center) { Icon(Icons.Default.AddCircleOutline, contentDescription = "Add Playlist", tint = premiumAccent, modifier = Modifier.size(18.dp)) }
                     }
                 }
             }
             Spacer(modifier = Modifier.height(14.dp))
-            Row(modifier = Modifier.clip(CircleShape).background(premiumBg).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.CalendarMonth, null, tint = premiumTextSec, modifier = Modifier.size(12.dp))
+            Row(modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(premiumSurfaceVariant).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.CalendarMonth, null, tint = premiumTextSec, modifier = Modifier.size(14.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(expDate, color = premiumAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text(expDate, color = premiumTextSec, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

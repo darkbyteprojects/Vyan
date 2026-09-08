@@ -49,7 +49,6 @@ fun ExtremeMarketplaceScreen(
     var allSources by remember { mutableStateOf<List<ExtremeSourceConfig>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
-    // PERFECT MEMORY: Remembers category when navigating away
     var selectedCategory by rememberSaveable { mutableStateOf("All") }
 
     LaunchedEffect(Unit) {
@@ -68,29 +67,31 @@ fun ExtremeMarketplaceScreen(
         else allSources.filter { it.category.ifBlank { "General" } == selectedCategory }
     }
 
-    val premiumBg = Color(0xFF09090B)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumTextSec = Color(0xFFA1A1AA)
-    val softRed = Color(0xFF881337)
+    // Telegram-Style Glass Palette
+    val premiumBg = Color(0xFF0E1621)
+    val premiumSurface = Color(0xFF17212B)
+    val premiumSurfaceVariant = Color(0xFF242F3D)
+    val premiumAccent = Color(0xFFFFFFFF)
+    val premiumTextSec = Color(0xFF7F91A4)
+    val premiumBlue = Color(0xFF5288C1)
 
     if (isLoading) {
         Box(modifier = Modifier.fillMaxSize().background(premiumBg), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = premiumAccent)
+            CircularProgressIndicator(color = premiumBlue)
         }
         return
     }
 
     Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) {
                     Icon(Icons.Default.ArrowBack, "Back", tint = premiumAccent)
                 }
                 Spacer(modifier = Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Source Marketplace", color = premiumAccent, fontSize = 28.sp, fontWeight = FontWeight.Black)
-                    Text("Add or preview community sources", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Source Marketplace", color = premiumAccent, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    Text("Add or preview community sources", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 }
             }
 
@@ -104,8 +105,8 @@ fun ExtremeMarketplaceScreen(
                         onClick = { selectedCategory = category },
                         label = { Text(category, fontWeight = FontWeight.Bold, fontSize = 13.sp) },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = premiumAccent,
-                            selectedLabelColor = premiumBg,
+                            selectedContainerColor = premiumBlue,
+                            selectedLabelColor = premiumAccent,
                             containerColor = premiumSurface,
                             labelColor = premiumTextSec
                         ),
@@ -153,7 +154,7 @@ fun ExtremeMarketplaceScreen(
                                         sharedPrefs.edit().putStringSet("selected_extreme_sources", newSet).apply()
                                     },
                                     modifier = Modifier.fillMaxWidth().height(36.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = if (isAdded) Color(0xFF27272A) else softRed, contentColor = premiumAccent),
+                                    colors = ButtonDefaults.buttonColors(containerColor = if (isAdded) premiumSurfaceVariant else premiumBlue, contentColor = premiumAccent),
                                     contentPadding = PaddingValues(0.dp),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {

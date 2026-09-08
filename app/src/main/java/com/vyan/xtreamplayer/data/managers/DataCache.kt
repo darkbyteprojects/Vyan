@@ -4,7 +4,7 @@ import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.vyan.xtreamplayer.models.LiveCategory
-import com.vyan.xtreamplayer.models.LiveChannel
+import com.vyan.xtreamplayer.models.XtreamLiveChannelModel
 import com.vyan.xtreamplayer.models.SeriesCategory
 import com.vyan.xtreamplayer.models.SeriesItem
 import com.vyan.xtreamplayer.models.VodCategory
@@ -18,7 +18,7 @@ object DataCache {
     val vodCategories = ConcurrentHashMap<String, List<VodCategory>>()
     val seriesCategories = ConcurrentHashMap<String, List<SeriesCategory>>()
 
-    val liveChannels = ConcurrentHashMap<String, List<LiveChannel>>()
+    val liveChannels = ConcurrentHashMap<String, List<XtreamLiveChannelModel>>()
     val vodMovies = ConcurrentHashMap<String, List<VodMovie>>()
     val seriesItems = ConcurrentHashMap<String, List<SeriesItem>>()
 

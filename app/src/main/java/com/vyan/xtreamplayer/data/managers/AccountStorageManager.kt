@@ -7,7 +7,7 @@ import com.google.gson.reflect.TypeToken
 import com.vyan.xtreamplayer.models.UserAccount
 import com.vyan.xtreamplayer.models.UserInfo
 
-class AccountManager(context: Context) {
+class AccountStorageManager(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("xtream_player_prefs", Context.MODE_PRIVATE)
     private val gson = Gson()
 

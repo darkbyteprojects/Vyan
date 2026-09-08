@@ -35,7 +35,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import com.vyan.xtreamplayer.data.managers.AccountManager
+import com.vyan.xtreamplayer.data.managers.AccountStorageManager
 import com.vyan.xtreamplayer.network.CatalogScraper
 import com.vyan.xtreamplayer.network.CatalogSource
 import com.vyan.xtreamplayer.data.managers.DataCache
@@ -66,7 +66,7 @@ fun saveDiscoveredPortal(context: Context, portal: ScrapedPortal) {
 
 @Composable
 fun HitEpgRow(channel: AggregatedChannel) {
-    val premiumTextSec = Color(0xFFA1A1AA); val premiumRed = Color(0xFFE50914); val premiumAccent = Color(0xFFFAFAFA)
+    val premiumTextSec = Color(0xFF7F91A4); val premiumRed = Color(0xFFE53935); val premiumAccent = Color(0xFFFFFFFF)
     var epgText by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(channel.streamUrl) {
         val cacheKey = "${channel.portalUrl}|${channel.streamId}"
@@ -91,7 +91,7 @@ fun HitEpgRow(channel: AggregatedChannel) {
     }
     if (!epgText.isNullOrEmpty()) {
         Row(modifier = Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(premiumRed).padding(horizontal = 6.dp, vertical = 2.dp)) { Text("NOW", color = premiumAccent, fontSize = 8.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif) }
+            Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(premiumRed.copy(alpha = 0.9f)).padding(horizontal = 6.dp, vertical = 2.dp)) { Text("NOW", color = premiumAccent, fontSize = 8.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif) }
             Spacer(modifier = Modifier.width(6.dp))
             Text(epgText!!, color = premiumTextSec, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -99,11 +99,10 @@ fun HitEpgRow(channel: AggregatedChannel) {
 }
 
 @Composable
-fun AutoChannelsScreen(channelConfig: UserCustomCategory, accountManager: AccountManager, settingsManager: SettingsManager, onPlayChannel: (String, String, List<AggregatedChannel>) -> Unit, onBack: () -> Unit) {
-    val premiumBg = Color(0xFF09090B); val premiumSurface = Color(0xFF18181B); val premiumAccent = Color(0xFFFAFAFA); val premiumTextSec = Color(0xFFA1A1AA); val premiumRed = Color(0xFFE50914)
+fun AutoChannelsScreen(channelConfig: UserCustomCategory, accountStorageManager: AccountStorageManager, settingsManager: SettingsManager, onPlayChannel: (String, String, List<AggregatedChannel>) -> Unit, onBack: () -> Unit) {
+    val premiumBg = Color(0xFF0E1621); val premiumSurface = Color(0xFF17212B); val premiumSurfaceVariant = Color(0xFF242F3D); val premiumAccent = Color(0xFFFFFFFF); val premiumTextSec = Color(0xFF7F91A4); val premiumRed = Color(0xFFE53935); val premiumBlue = Color(0xFF5288C1)
     val context = LocalContext.current; val scope = rememberCoroutineScope()
 
-    // PERFECT MEMORY: Remembers exact scroll position when returning from the player
     val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
 
     val aggregatedChannels = remember { mutableStateListOf<AggregatedChannel>() }
@@ -113,7 +112,6 @@ fun AutoChannelsScreen(channelConfig: UserCustomCategory, accountManager: Accoun
     var isReverifying by remember { mutableStateOf(false) }
     var reverifyProgress by remember { mutableStateOf("") }
 
-    // PERFECT MEMORY: Remembers search query and folder view modes
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
     var isFolderView by rememberSaveable { mutableStateOf(false) }
@@ -126,7 +124,6 @@ fun AutoChannelsScreen(channelConfig: UserCustomCategory, accountManager: Accoun
     val pendingPortals = remember { mutableListOf<ScrapedPortal>() }
     val attemptedKeys = remember { mutableSetOf<String>() }
 
-    // INTELLIGENT BACK HANDLER
     BackHandler(enabled = isSearchExpanded || isFolderView || isScrapingMore) {
         if (isScrapingMore) { scanJob?.cancel(); isScrapingMore = false; isLoading = false; statusText = "Scan stopped." }
         else if (isSearchExpanded) { isSearchExpanded = false; searchQuery = "" }
@@ -148,7 +145,7 @@ fun AutoChannelsScreen(channelConfig: UserCustomCategory, accountManager: Accoun
                 val prefs = context.getSharedPreferences("DiscoverPrefs", Context.MODE_PRIVATE); val savedJson = prefs.getString("saved_portals", null)
                 if (savedJson != null) { try { val scraped: List<ScrapedPortal> = Gson().fromJson(savedJson, object : TypeToken<List<ScrapedPortal>>() {}.type); scraped.forEach { allCurrentPortals.add(Triple(it.url, it.username, it.pass)); portalNames["${it.url}|${it.username}"] = it.username; attemptedKeys.add("${it.username}|${it.pass}".lowercase()) } } catch (e: Exception) {} }
             }
-            accountManager.getAccounts().forEach { acc ->
+            accountStorageManager.getAccounts().forEach { acc ->
                 if (activeProfile.playlistIds.isEmpty() || activeProfile.playlistIds.contains(acc.id)) { allCurrentPortals.add(Triple(acc.url, acc.username, acc.pass)); portalNames["${acc.url}|${acc.username}"] = acc.alias.ifEmpty { acc.username }.ifEmpty { "Local File" }; attemptedKeys.add("${acc.username}|${acc.pass}".lowercase()) }
             }
             val currentPortalKeys = allCurrentPortals.map { "${it.first}|${it.second}" }.toSet()
@@ -185,27 +182,27 @@ fun AutoChannelsScreen(channelConfig: UserCustomCategory, accountManager: Accoun
     val groupedChannels = remember(filteredChannels) { filteredChannels.groupBy { it.username } }
 
     Column(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-        Column(modifier = Modifier.weight(1f).padding(horizontal = 20.dp)) {
+        Column(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
 
             Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp).animateContentSize()) {
                 if (isSearchExpanded) {
                     TextField(
                         value = searchQuery, onValueChange = { searchQuery = it }, modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Search hits...", color = premiumTextSec, fontSize = 15.sp) },
-                        leadingIcon = { IconButton(onClick = { isSearchExpanded = false; searchQuery = "" }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = premiumAccent) } },
-                        trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumAccent) } },
-                        shape = CircleShape, singleLine = true,
-                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurface, unfocusedContainerColor = premiumSurface, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
+                        leadingIcon = { IconButton(onClick = { isSearchExpanded = false; searchQuery = "" }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = premiumTextSec) } },
+                        trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumTextSec) } },
+                        shape = RoundedCornerShape(16.dp), singleLine = true,
+                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurfaceVariant, unfocusedContainerColor = premiumSurfaceVariant, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
                     )
                 } else {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = onBack, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = premiumAccent) }
                         Spacer(modifier = Modifier.width(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(channelConfig.name ?: "Category", color = premiumAccent, fontSize = 24.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(if (isReverifying) reverifyProgress else "${aggregatedChannels.size} Channels Aggregated", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(channelConfig.name ?: "Category", color = premiumAccent, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (isReverifying) reverifyProgress else "${aggregatedChannels.size} Channels Aggregated", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
-                        if (isLoading) { Box(modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface), contentAlignment = Alignment.Center) { CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = premiumAccent) }; Spacer(modifier = Modifier.width(8.dp)) }
+                        if (isLoading) { Box(modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface), contentAlignment = Alignment.Center) { CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = premiumBlue) }; Spacer(modifier = Modifier.width(8.dp)) }
                         else if (aggregatedChannels.isNotEmpty()) {
                             IconButton(
                                 onClick = {
@@ -220,33 +217,35 @@ fun AutoChannelsScreen(channelConfig: UserCustomCategory, accountManager: Accoun
                                     }
                                 },
                                 modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)
-                            ) { if (isReverifying) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = premiumAccent) else Icon(Icons.Default.CheckCircleOutline, contentDescription = "Reverify Links", tint = premiumAccent) }
+                            ) { if (isReverifying) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = premiumBlue) else Icon(Icons.Default.CheckCircleOutline, contentDescription = "Reverify Links", tint = premiumTextSec) }
                             Spacer(modifier = Modifier.width(8.dp))
                         }
-                        IconButton(onClick = { isSearchExpanded = true }, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(Icons.Default.Search, "Search", tint = premiumAccent) }
+                        IconButton(onClick = { isSearchExpanded = true }, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(Icons.Default.Search, "Search", tint = premiumTextSec) }
                         Spacer(modifier = Modifier.width(8.dp))
-                        IconButton(onClick = { isFolderView = !isFolderView }, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(imageVector = if (isFolderView) Icons.Default.List else Icons.Default.Folder, contentDescription = "Toggle View", tint = premiumAccent) }
+                        IconButton(onClick = { isFolderView = !isFolderView }, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(imageVector = if (isFolderView) Icons.Default.List else Icons.Default.Folder, contentDescription = "Toggle View", tint = premiumTextSec) }
                     }
                 }
             }
 
             if (isLoading && aggregatedChannels.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Column(horizontalAlignment = Alignment.CenterHorizontally) { CircularProgressIndicator(color = premiumAccent); Spacer(modifier = Modifier.height(16.dp)); Text(statusText, color = premiumTextSec, fontSize = 15.sp, fontWeight = FontWeight.Medium) } }
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Column(horizontalAlignment = Alignment.CenterHorizontally) { CircularProgressIndicator(color = premiumBlue); Spacer(modifier = Modifier.height(16.dp)); Text(statusText, color = premiumTextSec, fontSize = 15.sp, fontWeight = FontWeight.Medium) } }
             } else if (filteredChannels.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No matching channels found.", color = premiumTextSec, fontSize = 15.sp, fontWeight = FontWeight.Medium) }
             } else {
                 if (isFolderView) {
-                    LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
+                    LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
                         groupedChannels.forEach { (username, folderChannels) ->
                             val safeName = username.ifEmpty { "Local File" }; val isExpanded = expandedFolders.contains(safeName)
                             item(key = "folder_$safeName") {
-                                Card(modifier = Modifier.fillMaxWidth().clickable { expandedFolders = if (isExpanded) expandedFolders - safeName else expandedFolders + safeName }, shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = premiumSurface), elevation = CardDefaults.cardElevation(0.dp)) {
+                                Card(modifier = Modifier.fillMaxWidth().clickable { expandedFolders = if (isExpanded) expandedFolders - safeName else expandedFolders + safeName }, shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = premiumSurface), elevation = CardDefaults.cardElevation(0.dp)) {
                                     Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.Folder, contentDescription = "Folder", tint = premiumAccent)
+                                        Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(premiumSurfaceVariant), contentAlignment = Alignment.Center) {
+                                            Icon(imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.Folder, contentDescription = "Folder", tint = premiumBlue)
+                                        }
                                         Spacer(modifier = Modifier.width(16.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(text = safeName, color = premiumAccent, fontSize = 17.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text(text = "${folderChannels.size} verified", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold)
+                                            Text(text = safeName, color = premiumAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(text = "${folderChannels.size} verified", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.Medium)
                                         }
                                     }
                                 }
@@ -255,14 +254,14 @@ fun AutoChannelsScreen(channelConfig: UserCustomCategory, accountManager: Accoun
                         }
                     }
                 } else {
-                    LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
+                    LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
                         items(filteredChannels, key = { "${it.streamUrl}_${it.username}_${it.streamId}" }) { channel -> AggregatedChannelCard(channel, aggregatedChannels, onPlayChannel) }
                     }
                 }
             }
         }
 
-        Box(modifier = Modifier.fillMaxWidth().background(premiumBg).padding(horizontal = 20.dp, vertical = 12.dp)) {
+        Box(modifier = Modifier.fillMaxWidth().background(premiumSurface.copy(alpha = 0.6f)).padding(horizontal = 16.dp, vertical = 12.dp)) {
             Column {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     FlatSourceChip(
@@ -332,10 +331,10 @@ fun AutoChannelsScreen(channelConfig: UserCustomCategory, accountManager: Accoun
                                 withContext(Dispatchers.Main) { isScrapingMore = false; isLoading = false; statusText = "Scan Complete" }
                             }
                         },
-                        modifier = Modifier.weight(1.5f).height(48.dp), shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 4.dp), colors = ButtonDefaults.buttonColors(containerColor = if (isScrapingMore) premiumRed else premiumAccent, contentColor = if (isScrapingMore) premiumAccent else premiumBg)
+                        modifier = Modifier.weight(1.5f).height(48.dp), shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 4.dp), colors = ButtonDefaults.buttonColors(containerColor = if (isScrapingMore) premiumRed else premiumBlue, contentColor = premiumAccent)
                     ) {
-                        if (isScrapingMore) { Icon(Icons.Default.Stop, null, modifier = Modifier.size(18.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("Stop", fontSize = 13.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                        else { Icon(Icons.Default.TravelExplore, null, modifier = Modifier.size(18.dp)); Spacer(modifier = Modifier.width(4.dp)); Text("Get Channels", fontSize = 13.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        if (isScrapingMore) { Icon(Icons.Default.Stop, null, modifier = Modifier.size(18.dp)); Spacer(modifier = Modifier.width(6.dp)); Text("Stop", fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        else { Icon(Icons.Default.TravelExplore, null, modifier = Modifier.size(18.dp)); Spacer(modifier = Modifier.width(6.dp)); Text("Get Channels", fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }
                 }
             }
@@ -345,20 +344,20 @@ fun AutoChannelsScreen(channelConfig: UserCustomCategory, accountManager: Accoun
 
 @Composable
 fun AggregatedChannelCard(channel: AggregatedChannel, allChannels: List<AggregatedChannel>, onPlayChannel: (String, String, List<AggregatedChannel>) -> Unit) {
-    val premiumBg = Color(0xFF09090B); val premiumSurface = Color(0xFF18181B); val premiumAccent = Color(0xFFFAFAFA); val premiumTextSec = Color(0xFFA1A1AA)
-    Card(onClick = { val orderedSources = listOf(channel) + allChannels.filter { it != channel }; onPlayChannel(channel.streamUrl, channel.name, orderedSources) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = premiumSurface), elevation = CardDefaults.cardElevation(0.dp)) {
-        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (!channel.icon.isNullOrEmpty()) { AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(channel.icon).crossfade(true).build(), contentDescription = channel.name, modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(premiumBg), contentScale = ContentScale.Crop) }
-            else { Box(modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(premiumBg), contentAlignment = Alignment.Center) { Icon(Icons.Default.Tv, null, tint = premiumTextSec, modifier = Modifier.size(28.dp)) } }
-            Spacer(modifier = Modifier.width(16.dp))
+    val premiumBg = Color(0xFF0E1621); val premiumSurface = Color(0xFF17212B); val premiumAccent = Color(0xFFFFFFFF); val premiumTextSec = Color(0xFF7F91A4); val premiumBlue = Color(0xFF5288C1)
+    Card(onClick = { val orderedSources = listOf(channel) + allChannels.filter { it != channel }; onPlayChannel(channel.streamUrl, channel.name, orderedSources) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = premiumSurface), elevation = CardDefaults.cardElevation(0.dp)) {
+        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!channel.icon.isNullOrEmpty()) { AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(channel.icon).crossfade(true).build(), contentDescription = channel.name, modifier = Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(premiumBg), contentScale = ContentScale.Crop) }
+            else { Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(premiumBg), contentAlignment = Alignment.Center) { Icon(Icons.Default.Tv, null, tint = premiumTextSec.copy(alpha = 0.5f), modifier = Modifier.size(26.dp)) } }
+            Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(channel.name, color = premiumAccent, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(channel.name, color = premiumAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(channel.sourceName, color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(channel.sourceName, color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 HitEpgRow(channel = channel)
             }
             Spacer(modifier = Modifier.width(8.dp))
-            Icon(Icons.Default.PlayCircle, null, tint = premiumAccent, modifier = Modifier.size(32.dp))
+            Icon(Icons.Default.PlayCircle, null, tint = premiumBlue, modifier = Modifier.size(32.dp))
         }
     }
 }

@@ -50,18 +50,13 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
-import androidx.media3.datasource.HttpDataSource.HttpDataSourceException
-import androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.vyan.xtreamplayer.data.managers.SettingsManager
-import com.vyan.xtreamplayer.stream.DirectMethod
-import com.vyan.xtreamplayer.stream.ProxyMethod
-import com.vyan.xtreamplayer.stream.WebMethod
-import com.vyan.xtreamplayer.stream.PlaybackMethod
-import com.vyan.xtreamplayer.stream.StreamProfile
+import com.vyan.xtreamplayer.stream.*
+import com.vyan.xtreamplayer.utils.ExoServerDiagnostic
 import kotlinx.coroutines.delay
 
 fun getQualityTag(height: Int): String {
@@ -167,21 +162,24 @@ fun PlayerScreen(
         }
     }
 
+    // MANDATORY ROUTING PIPELINE: Every stream is universally routed here
     LaunchedEffect(profile) {
         if (isPreview || exoPlayer == null) return@LaunchedEffect
         isLoading = true
         errorMessage = null
 
         try {
-            val workingProfile = if (profile.method == PlaybackMethod.WEB_RESOLVER) {
-                WebMethod.resolve(context, profile)
+            val routedProfile = PlaybackMethodRouter.decideAndRoute(profile)
+
+            val workingProfile = if (routedProfile.method == PlaybackMethod.WEB_RESOLVER) {
+                WebEmbedPlaybackBuilder.resolve(context, routedProfile)
             } else {
-                profile
+                routedProfile
             }
 
             val mediaSource = when (workingProfile.method) {
-                PlaybackMethod.LOCAL_PROXY -> ProxyMethod.buildMediaSource(context, workingProfile)
-                else -> DirectMethod.buildMediaSource(context, workingProfile)
+                PlaybackMethod.LOCAL_PROXY -> LocalProxyPlaybackBuilder.buildMediaSource(context, workingProfile)
+                else -> DirectHttpPlaybackBuilder.buildMediaSource(context, workingProfile)
             }
 
             exoPlayer.setMediaSource(mediaSource)
@@ -238,9 +236,7 @@ fun PlayerScreen(
                 errorMessage = when {
                     isDecoderCrash -> "Codec Error: Stream blocked or format unsupported."
                     error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> "Stream blocked. Server returned HTML instead of video."
-                    cause is InvalidResponseCodeException -> "HTTP ${cause.responseCode}: CDN Rejected Request."
-                    cause is HttpDataSourceException -> "Network Connection Failed. Stream offline."
-                    else -> "Playback Error: ${error.errorCodeName}"
+                    else -> ExoServerDiagnostic.extractExactError(error)
                 }
             }
         }

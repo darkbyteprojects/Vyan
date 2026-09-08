@@ -1,7 +1,7 @@
 package com.vyan.xtreamplayer.network
 
 import com.vyan.xtreamplayer.models.LiveCategory
-import com.vyan.xtreamplayer.models.LiveChannel
+import com.vyan.xtreamplayer.models.XtreamLiveChannelModel
 import com.vyan.xtreamplayer.models.LoginResponse
 import com.vyan.xtreamplayer.models.SeriesCategory
 import com.vyan.xtreamplayer.models.SeriesDetailsResponse
@@ -43,7 +43,7 @@ interface XtreamService {
         @Query("password") pass: String,
         @Query("category_id") categoryId: String? = null,
         @Query("action") action: String = "get_live_streams"
-    ): Response<List<LiveChannel>>
+    ): Response<List<XtreamLiveChannelModel>>
 
     @GET
     suspend fun getVodCategories(

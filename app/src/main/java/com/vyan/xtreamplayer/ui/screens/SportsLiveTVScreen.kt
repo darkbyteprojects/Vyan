@@ -4,7 +4,6 @@ package com.vyan.xtreamplayer.ui.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -49,7 +48,6 @@ fun parseEventTimestamp(dateTimeStr: String): Long {
             SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.US)
         )
         for (fmt in formats) {
-            // Force UTC timezone to match the server JSON payload accurately
             fmt.timeZone = TimeZone.getTimeZone("UTC")
             try {
                 val parsed = fmt.parse(cleanStr)
@@ -63,7 +61,6 @@ fun parseEventTimestamp(dateTimeStr: String): Long {
 fun getFormattedMatchTime(startTimeStr: String): String {
     val ms = parseEventTimestamp(startTimeStr)
     if (ms == 0L) return ""
-    // Translate UTC to the user's Local Timezone for card display
     val fmt = SimpleDateFormat("dd MMM, hh:mm a", Locale.US)
     fmt.timeZone = TimeZone.getDefault()
     return fmt.format(ms)
@@ -73,14 +70,13 @@ fun getEventStatus(event: LiveSportsEvent, serverTimeOffset: Long): EventStatus 
     val startTimeMs = parseEventTimestamp(event.startTime)
     if (startTimeMs == 0L) return EventStatus.LIVE
 
-    // Server time offset keeps us strictly synced to the backend's clock
     val now = System.currentTimeMillis() + serverTimeOffset
 
     val endTimeMs = if (event.endTime.isNotBlank()) {
         val parsedEnd = parseEventTimestamp(event.endTime)
         if (parsedEnd > 0L) parsedEnd else startTimeMs + (4 * 3600 * 1000L)
     } else {
-        startTimeMs + (4 * 3600 * 1000L) // 4 hours window fallback
+        startTimeMs + (4 * 3600 * 1000L)
     }
 
     return when {
@@ -110,7 +106,6 @@ fun getTimeCountdownOrDate(startTimeStr: String, serverTimeOffset: Long): String
     return "Starting Soon"
 }
 
-// Maps exact tournament/category strings from the JSON to universally recognized emojis
 fun getCategoryIcon(category: String): String {
     return when (category.lowercase(Locale.ROOT).trim()) {
         "boxing", "wwe", "mixed martial arts", "ufc" -> "🥊"
@@ -130,14 +125,23 @@ fun getCategoryIcon(category: String): String {
 
 @Composable
 fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
+    // Telegram-Style Glass Palette
+    val premiumBg = Color(0xFF0E1621)
+    val premiumSurface = Color(0xFF17212B)
+    val premiumSurfaceVariant = Color(0xFF242F3D)
+    val premiumAccent = Color(0xFFFFFFFF)
+    val premiumTextSec = Color(0xFF7F91A4)
+    val premiumRed = Color(0xFFE53935)
+    val premiumBlue = Color(0xFF5288C1)
+
     val context = LocalContext.current
     var events by remember { mutableStateOf<List<Pair<LiveSportsEvent, EventStatus>>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
 
     var refreshTrigger by remember { mutableIntStateOf(0) }
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: All, 1: Live, 2: Upcoming, 3: Recent
-    var selectedCategory by remember { mutableStateOf("All") } // Icon filter state
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedCategory by remember { mutableStateOf("All") }
 
     var selectedEventForLinks by remember { mutableStateOf<LiveSportsEvent?>(null) }
     var dialogStreamOptions by remember { mutableStateOf<List<StreamOption>>(emptyList()) }
@@ -164,12 +168,10 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
         isLoading = false
     }
 
-    // Dynamic list of available categories for the Icon Row
     val availableCategories = remember(events) {
         listOf("All") + events.map { it.first.category }.distinct().sorted()
     }
 
-    // Filter by Time Status AND Selected Sport Icon
     val filteredEvents = remember(events, selectedTab, selectedCategory) {
         val byTab = when (selectedTab) {
             1 -> events.filter { it.second == EventStatus.LIVE }
@@ -206,34 +208,31 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
         }
     }
 
-    // Pure Black UI
-    Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        // Top Header
+    Column(modifier = Modifier.fillMaxSize().background(premiumBg)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 14.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = "Live Sports TV",
-                color = Color.White,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Black
+                color = premiumAccent,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold
             )
             IconButton(
                 onClick = { refreshTrigger++ },
-                modifier = Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.1f)).size(38.dp)
+                modifier = Modifier.clip(CircleShape).background(premiumSurface).size(40.dp)
             ) {
-                Icon(Icons.Default.Refresh, "Refresh", tint = Color.White, modifier = Modifier.size(20.dp))
+                Icon(Icons.Default.Refresh, "Refresh", tint = premiumTextSec, modifier = Modifier.size(20.dp))
             }
         }
 
-        // Icon-Only Category Scroll Row
         LazyRow(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(availableCategories) { cat ->
                 val isSelected = selectedCategory == cat
@@ -241,21 +240,19 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
 
                 Box(
                     modifier = Modifier
-                        .size(46.dp)
+                        .size(44.dp)
                         .clip(CircleShape)
-                        .background(if (isSelected) Color(0xFFE50914) else Color(0xFF141414))
-                        .border(1.dp, if (isSelected) Color(0xFFE50914) else Color.White.copy(alpha = 0.1f), CircleShape)
+                        .background(if (isSelected) premiumBlue else premiumSurface)
                         .clickable { selectedCategory = cat },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(iconStr, fontSize = 20.sp)
+                    Text(iconStr, fontSize = 18.sp)
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Time Filter Tabs (All, Live, Upcoming, Recent)
         LazyRow(
             modifier = Modifier
                 .fillMaxWidth()
@@ -270,49 +267,57 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                 FilterChip(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    label = { Text("All") },
+                    label = { Text("All", fontWeight = FontWeight.Bold) },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color.White,
-                        selectedLabelColor = Color.Black,
-                        containerColor = Color(0xFF141414),
-                        labelColor = Color.LightGray
-                    )
+                        selectedContainerColor = premiumBlue,
+                        selectedLabelColor = premiumAccent,
+                        containerColor = premiumSurface,
+                        labelColor = premiumTextSec
+                    ),
+                    border = null,
+                    shape = CircleShape
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 FilterChip(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    label = { Text("Live ($liveCount)") },
+                    label = { Text("Live ($liveCount)", fontWeight = FontWeight.Bold) },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color.White,
-                        selectedLabelColor = Color.Black,
-                        containerColor = Color(0xFF141414),
-                        labelColor = Color.LightGray
-                    )
+                        selectedContainerColor = premiumBlue,
+                        selectedLabelColor = premiumAccent,
+                        containerColor = premiumSurface,
+                        labelColor = premiumTextSec
+                    ),
+                    border = null,
+                    shape = CircleShape
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 FilterChip(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
-                    label = { Text("Upcoming ($upcomingCount)") },
+                    label = { Text("Upcoming ($upcomingCount)", fontWeight = FontWeight.Bold) },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color.White,
-                        selectedLabelColor = Color.Black,
-                        containerColor = Color(0xFF141414),
-                        labelColor = Color.LightGray
-                    )
+                        selectedContainerColor = premiumBlue,
+                        selectedLabelColor = premiumAccent,
+                        containerColor = premiumSurface,
+                        labelColor = premiumTextSec
+                    ),
+                    border = null,
+                    shape = CircleShape
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 FilterChip(
                     selected = selectedTab == 3,
                     onClick = { selectedTab = 3 },
-                    label = { Text("Recent ($recentCount)") },
+                    label = { Text("Recent ($recentCount)", fontWeight = FontWeight.Bold) },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color.White,
-                        selectedLabelColor = Color.Black,
-                        containerColor = Color(0xFF141414),
-                        labelColor = Color.LightGray
-                    )
+                        selectedContainerColor = premiumBlue,
+                        selectedLabelColor = premiumAccent,
+                        containerColor = premiumSurface,
+                        labelColor = premiumTextSec
+                    ),
+                    border = null,
+                    shape = CircleShape
                 )
             }
         }
@@ -321,28 +326,27 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
 
         if (isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFFE50914))
+                CircularProgressIndicator(color = premiumBlue)
             }
         } else if (filteredEvents.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No matches found in this section.", color = Color.Gray)
+                Text("No matches found in this section.", color = premiumTextSec, fontWeight = FontWeight.Medium)
             }
         } else {
             LazyColumn(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 groupedEvents.forEach { (categoryName, categoryEvents) ->
-                    // Hide header if we are already explicitly filtering by a single icon category
                     if (selectedCategory == "All") {
                         item {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.padding(vertical = 4.dp)
                             ) {
-                                Text(getCategoryIcon(categoryName), fontSize = 16.sp)
+                                Text(getCategoryIcon(categoryName), fontSize = 15.sp)
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(categoryName.uppercase(Locale.ROOT), color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(categoryName.uppercase(Locale.ROOT), color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -357,10 +361,10 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .border(1.dp, Color(0xFFFF8A00).copy(alpha = 0.5f), RoundedCornerShape(12.dp))
                                 .clickable { handleEventClick(event, displayTitle) },
-                            colors = CardDefaults.cardColors(containerColor = Color.Black)
+                            colors = CardDefaults.cardColors(containerColor = premiumSurface),
+                            shape = RoundedCornerShape(16.dp),
+                            elevation = CardDefaults.cardElevation(0.dp)
                         ) {
                             Column(
                                 modifier = Modifier.padding(14.dp).fillMaxWidth(),
@@ -368,7 +372,7 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                             ) {
                                 Text(
                                     text = event.title.uppercase(Locale.ROOT),
-                                    color = Color(0xFFE0E0E0),
+                                    color = premiumAccent,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
@@ -380,9 +384,9 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = matchTimeDisplay,
-                                        color = Color(0xFFAAAAAA),
+                                        color = premiumTextSec,
                                         fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold
+                                        fontWeight = FontWeight.Medium
                                     )
                                 }
 
@@ -402,13 +406,13 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                             AsyncImage(
                                                 model = event.logoA,
                                                 contentDescription = event.teamA,
-                                                modifier = Modifier.size(28.dp).clip(CircleShape).background(Color.White)
+                                                modifier = Modifier.size(26.dp).clip(CircleShape).background(Color.White)
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                         }
                                         Text(
                                             text = event.teamA.ifBlank { event.title },
-                                            color = Color.White,
+                                            color = premiumAccent,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 13.sp,
                                             maxLines = 1,
@@ -424,22 +428,22 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                             EventStatus.LIVE -> {
                                                 Text(
                                                     text = "Live",
-                                                    color = Color(0xFFE50914),
+                                                    color = premiumRed,
                                                     fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Black
+                                                    fontWeight = FontWeight.Bold
                                                 )
                                             }
                                             EventStatus.UPCOMING -> {
                                                 Text(
                                                     text = getTimeCountdownOrDate(event.startTime, serverOffset),
-                                                    color = Color(0xFF3B82F6),
+                                                    color = premiumBlue,
                                                     fontSize = 11.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     textAlign = TextAlign.Center
                                                 )
                                             }
                                             EventStatus.ENDED -> {
-                                                Text("ENDED", color = Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                Text("ENDED", color = premiumTextSec, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                             }
                                         }
                                     }
@@ -451,7 +455,7 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                     ) {
                                         Text(
                                             text = event.teamB.ifBlank { "" },
-                                            color = Color.White,
+                                            color = premiumAccent,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 13.sp,
                                             maxLines = 1,
@@ -463,7 +467,7 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                             AsyncImage(
                                                 model = event.logoB,
                                                 contentDescription = event.teamB,
-                                                modifier = Modifier.size(28.dp).clip(CircleShape).background(Color.White)
+                                                modifier = Modifier.size(26.dp).clip(CircleShape).background(Color.White)
                                             )
                                         }
                                     }
@@ -479,10 +483,10 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
     if (isResolvingLinks) {
         Dialog(onDismissRequest = { }) {
             Box(
-                modifier = Modifier.size(90.dp).background(Color(0xFF141414), RoundedCornerShape(16.dp)),
+                modifier = Modifier.size(90.dp).background(premiumSurface, RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator(color = Color(0xFFE50914))
+                CircularProgressIndicator(color = premiumBlue)
             }
         }
     }
@@ -490,17 +494,17 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
     if (selectedEventForLinks != null && dialogStreamOptions.isNotEmpty()) {
         Dialog(onDismissRequest = { selectedEventForLinks = null }) {
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xFF141414),
+                shape = RoundedCornerShape(20.dp),
+                color = premiumSurface,
                 modifier = Modifier.fillMaxWidth().padding(16.dp)
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Text(
                         text = "Select Stream Link",
-                        color = Color.White,
+                        color = premiumAccent,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 14.dp)
+                        modifier = Modifier.padding(bottom = 12.dp)
                     )
 
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -513,15 +517,15 @@ fun SportsScreen(onPlayMatch: (urlPayload: String, title: String) -> Unit) {
                                         onPlayMatch(option.url, currentEvent.title)
                                     }
                                 },
-                                shape = RoundedCornerShape(10.dp),
-                                color = Color(0xFF222228),
+                                shape = RoundedCornerShape(12.dp),
+                                color = premiumSurfaceVariant,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(
                                     text = option.title,
-                                    color = Color.White,
+                                    color = premiumAccent,
                                     fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontWeight = FontWeight.Medium,
                                     modifier = Modifier.padding(14.dp)
                                 )
                             }

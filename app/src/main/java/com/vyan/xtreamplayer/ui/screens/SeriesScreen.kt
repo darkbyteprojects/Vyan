@@ -34,7 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.vyan.xtreamplayer.data.managers.AccountManager
+import com.vyan.xtreamplayer.data.managers.AccountStorageManager
 import com.vyan.xtreamplayer.data.managers.DataCache
 import com.vyan.xtreamplayer.models.Episode
 import com.vyan.xtreamplayer.models.SeriesCategory
@@ -46,44 +46,45 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun SeriesScreen(
-    accountManager: AccountManager,
+    accountStorageManager: AccountStorageManager,
     onPlayEpisode: (SeriesItem, Episode) -> Unit,
     onLoginClick: () -> Unit = {},
     onSwitchPlaylistClick: () -> Unit,
     overrideAccount: UserAccount? = null
 ) {
-    val premiumBg = Color(0xFF09090B)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumTextSec = Color(0xFFA1A1AA)
+    // Telegram-Style Glass Palette
+    val premiumBg = Color(0xFF0E1621)
+    val premiumSurface = Color(0xFF17212B)
+    val premiumSurfaceVariant = Color(0xFF242F3D)
+    val premiumAccent = Color(0xFFFFFFFF)
+    val premiumTextSec = Color(0xFF7F91A4)
+    val premiumRed = Color(0xFFE53935)
+    val premiumBlue = Color(0xFF5288C1)
+
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("app_settings", Context.MODE_PRIVATE) }
 
-    // TAB-SPECIFIC PLAYLIST SELECTION FOR SERIES
     var currentAccount by remember {
         mutableStateOf(
             overrideAccount ?: run {
                 val savedId = sharedPrefs.getString("active_series_account_id", null)
-                accountManager.getAccounts().find { it.id == savedId } ?: accountManager.getActiveAccount()
+                accountStorageManager.getAccounts().find { it.id == savedId } ?: accountStorageManager.getActiveAccount()
             }
         )
     }
     val activeAccount = currentAccount
     val scope = rememberCoroutineScope()
 
-    // PERFECT MEMORY: Explicitly save selected category
     var selectedCategoryId by rememberSaveable { mutableStateOf("all") }
 
     val cacheKeyCat = activeAccount?.id ?: ""
     val cacheKeySeries = "${activeAccount?.id}_$selectedCategoryId"
 
-    // PERFECT MEMORY: Initialize data instantly from cache to prevent scroll loss
     var categories by remember { mutableStateOf<List<SeriesCategory>>(DataCache.seriesCategories[cacheKeyCat] ?: emptyList()) }
     var seriesList by remember { mutableStateOf<List<SeriesItem>>(DataCache.seriesItems[cacheKeySeries] ?: emptyList()) }
 
     var isLoadingSeries by remember { mutableStateOf(seriesList.isEmpty() && activeAccount != null) }
 
-    // PERFECT MEMORY: Explicitly save search query and grid state
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
     val gridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
@@ -93,7 +94,7 @@ fun SeriesScreen(
     var isLoadingDetails by remember { mutableStateOf(false) }
     var selectedSeasonNum by rememberSaveable { mutableStateOf("1") }
 
-    var favoriteSeriesIds by remember { mutableStateOf(accountManager.getFavoriteItems("fav_series")) }
+    var favoriteSeriesIds by remember { mutableStateOf(accountStorageManager.getFavoriteItems("fav_series")) }
     var showSwitchPlaylistSheet by remember { mutableStateOf(false) }
 
     BackHandler(enabled = isSearchExpanded || selectedCategoryId != "all" || selectedSeries != null) {
@@ -170,28 +171,28 @@ fun SeriesScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp).animateContentSize()) {
                 if (isSearchExpanded) {
                     TextField(
                         value = searchQuery, onValueChange = { searchQuery = it }, modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Search series...", color = premiumTextSec, fontSize = 15.sp) },
-                        leadingIcon = { IconButton(onClick = { isSearchExpanded = false; searchQuery = "" }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = premiumAccent) } },
-                        trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumAccent) } },
-                        shape = CircleShape, singleLine = true,
-                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurface, unfocusedContainerColor = premiumSurface, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
+                        leadingIcon = { IconButton(onClick = { isSearchExpanded = false; searchQuery = "" }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = premiumTextSec) } },
+                        trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumTextSec) } },
+                        shape = RoundedCornerShape(16.dp), singleLine = true,
+                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurfaceVariant, unfocusedContainerColor = premiumSurfaceVariant, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
                     )
                 } else {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Series", color = premiumAccent, fontSize = 32.sp, fontWeight = FontWeight.Black)
+                            Text("Series", color = premiumAccent, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text(if (activeAccount != null) "${filteredSeries.size} Series" else "No server connected", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text(if (activeAccount != null) "${filteredSeries.size} Series" else "No server connected", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            IconButton(onClick = { isSearchExpanded = true }, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(Icons.Default.Search, contentDescription = "Search", tint = premiumAccent) }
+                            IconButton(onClick = { isSearchExpanded = true }, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(Icons.Default.Search, contentDescription = "Search", tint = premiumTextSec) }
                             if (overrideAccount == null) {
-                                IconButton(onClick = { showSwitchPlaylistSheet = true }, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(Icons.Default.SwapHoriz, contentDescription = "Switch Playlist", tint = premiumAccent) }
+                                IconButton(onClick = { showSwitchPlaylistSheet = true }, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(Icons.Default.SwapHoriz, contentDescription = "Switch Playlist", tint = premiumTextSec) }
                             }
                         }
                     }
@@ -199,36 +200,36 @@ fun SeriesScreen(
             }
 
             if (activeAccount == null) {
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(24.dp), elevation = CardDefaults.cardElevation(0.dp)) {
-                    Column(modifier = Modifier.padding(40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                    Column(modifier = Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.CloudOff, contentDescription = null, tint = premiumTextSec, modifier = Modifier.size(64.dp))
-                        Spacer(modifier = Modifier.height(20.dp))
-                        Text("No Server Connected", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Black)
-                        Spacer(modifier = Modifier.height(32.dp))
-                        Button(onClick = onLoginClick, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumAccent, contentColor = premiumBg)) { Text("Connect Server", fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, fontSize = 16.sp) }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("No Server Connected", color = premiumAccent, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Button(onClick = onLoginClick, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumBlue, contentColor = premiumAccent)) { Text("Connect Server", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 15.sp) }
                     }
                 }
             } else {
                 if (categories.isNotEmpty()) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 20.dp)) {
-                        item { FilterChip(selected = selectedCategoryId == "all", onClick = { selectedCategoryId = "all" }, label = { Text("All", fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, fontSize = 14.sp) }, colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumAccent, selectedLabelColor = premiumBg, containerColor = premiumSurface, labelColor = premiumTextSec), border = null, shape = CircleShape) }
-                        items(categories) { cat -> FilterChip(selected = selectedCategoryId == cat.category_id, onClick = { selectedCategoryId = cat.category_id }, label = { Text(cat.category_name, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, fontSize = 14.sp) }, colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumAccent, selectedLabelColor = premiumBg, containerColor = premiumSurface, labelColor = premiumTextSec), border = null, shape = CircleShape) }
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 16.dp)) {
+                        item { FilterChip(selected = selectedCategoryId == "all", onClick = { selectedCategoryId = "all" }, label = { Text("All", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 13.sp) }, colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumBlue, selectedLabelColor = premiumAccent, containerColor = premiumSurface, labelColor = premiumTextSec), border = null, shape = CircleShape) }
+                        items(categories) { cat -> FilterChip(selected = selectedCategoryId == cat.category_id, onClick = { selectedCategoryId = cat.category_id }, label = { Text(cat.category_name, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 13.sp) }, colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumBlue, selectedLabelColor = premiumAccent, containerColor = premiumSurface, labelColor = premiumTextSec), border = null, shape = CircleShape) }
                     }
                 }
 
                 if (isLoadingSeries) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumAccent) }
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumBlue) }
                 } else {
-                    LazyVerticalGrid(columns = GridCells.Adaptive(minSize = 115.dp), state = gridState, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
+                    LazyVerticalGrid(columns = GridCells.Adaptive(minSize = 115.dp), state = gridState, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
                         items(filteredSeries, key = { it.series_id }) { item ->
-                            Card(onClick = { selectedSeries = item; loadSeriesDetails(item.series_id) }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                            Card(onClick = { selectedSeries = item; loadSeriesDetails(item.series_id) }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                                 Column {
                                     Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f/3f).background(premiumBg)) {
                                         AsyncImage(model = item.cover, contentDescription = item.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                                         val isFav = favoriteSeriesIds.contains(item.series_id.toString())
-                                        IconButton(onClick = { accountManager.toggleFavoriteItem("fav_series", item.series_id.toString()); favoriteSeriesIds = accountManager.getFavoriteItems("fav_series") }, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(36.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.6f))) { Icon(if (isFav) Icons.Default.Star else Icons.Default.StarBorder, contentDescription = "Fav", tint = if (isFav) Color(0xFFFFD700) else premiumAccent, modifier = Modifier.size(20.dp)) }
+                                        IconButton(onClick = { accountStorageManager.toggleFavoriteItem("fav_series", item.series_id.toString()); favoriteSeriesIds = accountStorageManager.getFavoriteItems("fav_series") }, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(32.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.6f))) { Icon(if (isFav) Icons.Default.Star else Icons.Default.StarBorder, contentDescription = "Fav", tint = if (isFav) Color(0xFFFFD700) else premiumAccent, modifier = Modifier.size(18.dp)) }
                                     }
-                                    Text(item.name, color = premiumAccent, fontSize = 14.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(12.dp))
+                                    Text(item.name, color = premiumAccent, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(10.dp))
                                 }
                             }
                         }
@@ -239,18 +240,18 @@ fun SeriesScreen(
     }
 
     if (showSwitchPlaylistSheet) {
-        val accounts = remember { accountManager.getAccounts() }
+        val accounts = remember { accountStorageManager.getAccounts() }
         val activeAcc = activeAccount
         ModalBottomSheet(
             onDismissRequest = { showSwitchPlaylistSheet = false },
             containerColor = premiumSurface,
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
             dragHandle = { BottomSheetDefaults.DragHandle(color = premiumTextSec) }
         ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp).navigationBarsPadding()) {
-                Text("Switch Series Playlist", color = premiumAccent, fontSize = 24.sp, fontWeight = FontWeight.Black)
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp).navigationBarsPadding()) {
+                Text("Switch Series Playlist", color = premiumAccent, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(16.dp))
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
                     items(accounts, key = { it.id }) { acc ->
                         val isSelected = acc.id == activeAcc?.id
                         Surface(
@@ -259,25 +260,25 @@ fun SeriesScreen(
                                 currentAccount = acc
                                 showSwitchPlaylistSheet = false
                             },
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (isSelected) Color(0xFF27272A) else Color(0xFF09090B),
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isSelected) premiumSurfaceVariant else premiumBg,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                            Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                    Box(modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(premiumBg), contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.VideoLibrary, null, tint = premiumTextSec, modifier = Modifier.size(20.dp))
+                                    Box(modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(premiumSurface), contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.VideoLibrary, null, tint = premiumTextSec, modifier = Modifier.size(18.dp))
                                     }
-                                    Spacer(modifier = Modifier.width(16.dp))
+                                    Spacer(modifier = Modifier.width(14.dp))
                                     Column {
-                                        Text(acc.alias.ifEmpty { acc.username }, color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(acc.alias.ifEmpty { acc.username }, color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Spacer(modifier = Modifier.height(2.dp))
-                                        Text(acc.url.ifEmpty { "Local M3U File" }, color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(acc.url.ifEmpty { "Local M3U File" }, color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                                 if (isSelected) {
                                     Spacer(modifier = Modifier.width(12.dp))
-                                    Icon(Icons.Default.Check, null, tint = premiumAccent, modifier = Modifier.size(20.dp))
+                                    Icon(Icons.Default.Check, null, tint = premiumBlue, modifier = Modifier.size(18.dp))
                                 }
                             }
                         }
@@ -288,29 +289,29 @@ fun SeriesScreen(
     }
 
     if (selectedSeries != null) {
-        ModalBottomSheet(onDismissRequest = { selectedSeries = null; seriesDetails = null }, containerColor = premiumBg, shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp)) {
-                Text(selectedSeries?.name ?: "Series Details", color = premiumAccent, fontSize = 24.sp, fontWeight = FontWeight.Black)
-                Spacer(modifier = Modifier.height(20.dp))
+        ModalBottomSheet(onDismissRequest = { selectedSeries = null; seriesDetails = null }, containerColor = premiumBg, shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp)) {
+                Text(selectedSeries?.name ?: "Series Details", color = premiumAccent, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(16.dp))
                 if (isLoadingDetails) {
-                    Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumAccent) }
+                    Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumBlue) }
                 } else if (seriesDetails != null) {
                     val seasons = seriesDetails?.episodes?.keys?.toList() ?: emptyList()
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 20.dp)) {
-                        items(seasons) { seasonNum -> FilterChip(selected = selectedSeasonNum == seasonNum, onClick = { selectedSeasonNum = seasonNum }, label = { Text("Season $seasonNum", fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, fontSize = 14.sp) }, colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumAccent, selectedLabelColor = premiumBg, containerColor = premiumSurface, labelColor = premiumTextSec), border = null, shape = CircleShape) }
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 16.dp)) {
+                        items(seasons) { seasonNum -> FilterChip(selected = selectedSeasonNum == seasonNum, onClick = { selectedSeasonNum = seasonNum }, label = { Text("Season $seasonNum", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 13.sp) }, colors = FilterChipDefaults.filterChipColors(selectedContainerColor = premiumBlue, selectedLabelColor = premiumAccent, containerColor = premiumSurface, labelColor = premiumTextSec), border = null, shape = CircleShape) }
                     }
                     val episodes = seriesDetails?.episodes?.get(selectedSeasonNum) ?: emptyList()
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
                         items(episodes) { ep ->
-                            Card(onClick = { onPlayEpisode(selectedSeries!!, ep); selectedSeries = null }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.PlayCircle, contentDescription = null, tint = premiumAccent, modifier = Modifier.size(36.dp))
-                                    Spacer(modifier = Modifier.width(16.dp))
+                            Card(onClick = { onPlayEpisode(selectedSeries!!, ep); selectedSeries = null }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.PlayCircle, contentDescription = null, tint = premiumBlue, modifier = Modifier.size(32.dp))
+                                    Spacer(modifier = Modifier.width(14.dp))
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("E${ep.episode_num}: ${ep.title.ifEmpty { "Episode ${ep.episode_num}" }}", color = premiumAccent, fontWeight = FontWeight.Black, fontSize = 16.sp)
+                                        Text("E${ep.episode_num}: ${ep.title.ifEmpty { "Episode ${ep.episode_num}" }}", color = premiumAccent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                         if (ep.info?.duration != null) {
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(ep.info.duration, color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(ep.info.duration, color = premiumTextSec, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                         }
                                     }
                                 }

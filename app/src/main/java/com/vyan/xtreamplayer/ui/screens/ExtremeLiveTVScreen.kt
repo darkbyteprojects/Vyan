@@ -35,22 +35,21 @@ import coil.compose.SubcomposeAsyncImage
 import com.vyan.xtreamplayer.core.ExtremeChannel
 import com.vyan.xtreamplayer.core.ExtremeSourceConfig
 import com.vyan.xtreamplayer.core.ExtremeSourceRegistry
-import com.vyan.xtreamplayer.core.SourceType
 import com.vyan.xtreamplayer.data.managers.SettingsManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 
 @Composable
 fun ExtremeChannelsScreen(
     settingsManager: SettingsManager,
     onPlayExtremeChannel: ((ExtremeChannel) -> Unit)? = null
 ) {
-    val premiumBg = Color(0xFF09090B)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumTextSec = Color(0xFFA1A1AA)
+    val premiumBg = Color(0xFF0E1621)
+    val premiumSurface = Color(0xFF17212B)
+    val premiumSurfaceVariant = Color(0xFF242F3D)
+    val premiumAccent = Color(0xFFFFFFFF)
+    val premiumTextSec = Color(0xFF7F91A4)
+    val premiumBlue = Color(0xFF5288C1)
 
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("app_settings", Context.MODE_PRIVATE) }
@@ -59,39 +58,16 @@ fun ExtremeChannelsScreen(
     var customConfigs by remember { mutableStateOf<List<ExtremeSourceConfig>>(emptyList()) }
     var isMasterLoading by remember { mutableStateOf(true) }
 
-    // Navigation and state variables with perfectly preserved memory
     var selectedSourceId by rememberSaveable { mutableStateOf<String?>(null) }
     var channelList by remember { mutableStateOf<List<ExtremeChannel>>(emptyList()) }
     var isFetchingChannels by remember { mutableStateOf(false) }
     var channelSearchQuery by rememberSaveable { mutableStateOf("") }
     var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
 
-    fun loadCustomConfigs() {
-        val jsonStr = sharedPrefs.getString("custom_extreme_sources", "[]") ?: "[]"
-        val list = mutableListOf<ExtremeSourceConfig>()
-        try {
-            val arr = JSONArray(jsonStr)
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                list.add(
-                    ExtremeSourceConfig(
-                        id = obj.optString("id"),
-                        name = obj.optString("name", "Custom Source"),
-                        category = obj.optString("category", "General"),
-                        url = obj.optString("url", ""),
-                        type = if (obj.optString("type", "M3U") == "M3U") SourceType.M3U_DIRECT else SourceType.JSON_WRAPPED,
-                        image = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/JioTV_logo.svg/1024px-JioTV_logo.svg.png"
-                    )
-                )
-            }
-        } catch (_: Exception) {}
-        customConfigs = list
-    }
-
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             masterConfigs = ExtremeSourceRegistry.loadMasterSources(context)
-            loadCustomConfigs()
+            customConfigs = ExtremeSourceRegistry.getCustomSources(context)
             withContext(Dispatchers.Main) { isMasterLoading = false }
         }
     }
@@ -136,15 +112,15 @@ fun ExtremeChannelsScreen(
     Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
         if (isMasterLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = premiumAccent)
+                CircularProgressIndicator(color = premiumBlue)
             }
         } else if (selectedSourceForChannels == null) {
-            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Live Extreme Channels", color = premiumAccent, fontSize = 32.sp, fontWeight = FontWeight.Black)
+                        Text("Live Extreme Channels", color = premiumAccent, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text("${activeHubSources.size} Active Hub Sources", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${activeHubSources.size} Active Hub Sources", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     }
                 }
 
@@ -155,8 +131,8 @@ fun ExtremeChannelsScreen(
                 } else {
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(minSize = 160.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                         contentPadding = PaddingValues(bottom = 40.dp)
                     ) {
                         items(activeHubSources, key = { it.id }) { source ->
@@ -165,22 +141,22 @@ fun ExtremeChannelsScreen(
                                 onClick = { selectedSourceId = source.id },
                                 modifier = Modifier.fillMaxWidth().height(140.dp),
                                 colors = CardDefaults.cardColors(containerColor = premiumSurface),
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(16.dp),
                                 elevation = CardDefaults.cardElevation(0.dp)
                             ) {
                                 Column(modifier = Modifier.fillMaxSize()) {
                                     Box(modifier = Modifier.fillMaxWidth().height(80.dp)) {
                                         AsyncImage(model = source.image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                                        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)))
+                                        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)))
                                         if (isCustom) {
-                                            Box(modifier = Modifier.padding(8.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF3B82F6)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                                Text("CUSTOM", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                                            Box(modifier = Modifier.padding(8.dp).clip(RoundedCornerShape(6.dp)).background(premiumBlue).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                                Text("CUSTOM", color = premiumAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                             }
                                         }
                                     }
                                     Row(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text(source.name, color = premiumAccent, fontSize = 15.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Icon(Icons.Default.PlayCircleFilled, null, tint = premiumAccent, modifier = Modifier.size(28.dp))
+                                        Text(source.name, color = premiumAccent, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Icon(Icons.Default.PlayCircleFilled, null, tint = premiumBlue, modifier = Modifier.size(28.dp))
                                     }
                                 }
                             }
@@ -191,16 +167,16 @@ fun ExtremeChannelsScreen(
         } else {
             val filteredChannels = channelList.filter { channelSearchQuery.isBlank() || it.name.contains(channelSearchQuery, ignoreCase = true) }
 
-            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp).animateContentSize()) {
                     if (isSearchExpanded) {
                         TextField(
                             value = channelSearchQuery, onValueChange = { channelSearchQuery = it }, modifier = Modifier.fillMaxWidth(),
                             placeholder = { Text("Search channels...", color = premiumTextSec, fontSize = 15.sp) },
-                            leadingIcon = { IconButton(onClick = { isSearchExpanded = false; channelSearchQuery = "" }) { Icon(Icons.Default.ArrowBack, null, tint = premiumAccent) } },
-                            trailingIcon = { if (channelSearchQuery.isNotEmpty()) IconButton(onClick = { channelSearchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumAccent) } },
-                            shape = CircleShape, singleLine = true,
-                            colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurface, unfocusedContainerColor = premiumSurface, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
+                            leadingIcon = { IconButton(onClick = { isSearchExpanded = false; channelSearchQuery = "" }) { Icon(Icons.Default.ArrowBack, null, tint = premiumTextSec) } },
+                            trailingIcon = { if (channelSearchQuery.isNotEmpty()) IconButton(onClick = { channelSearchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumTextSec) } },
+                            shape = RoundedCornerShape(16.dp), singleLine = true,
+                            colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurfaceVariant, unfocusedContainerColor = premiumSurfaceVariant, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
                         )
                     } else {
                         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -209,46 +185,46 @@ fun ExtremeChannelsScreen(
                             }
                             Spacer(modifier = Modifier.width(16.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(selectedSourceForChannels.name, color = premiumAccent, fontSize = 24.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${channelList.size} Channels Found", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text(selectedSourceForChannels.name, color = premiumAccent, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${channelList.size} Channels Found", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                             }
                             IconButton(onClick = { isSearchExpanded = true }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) {
-                                Icon(Icons.Default.Search, "Search", tint = premiumAccent)
+                                Icon(Icons.Default.Search, "Search", tint = premiumTextSec)
                             }
                         }
                     }
                 }
 
                 if (isFetchingChannels) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumAccent) }
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = premiumBlue) }
                 } else if (filteredChannels.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No channels found.", color = premiumTextSec) }
                 } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
                         itemsIndexed(filteredChannels, key = { index, ch -> "${ch.id}_${ch.streamUrl}_$index" }) { _, channel ->
                             Card(
                                 onClick = { onPlayExtremeChannel?.invoke(channel) },
                                 colors = CardDefaults.cardColors(containerColor = premiumSurface),
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(16.dp),
                                 elevation = CardDefaults.cardElevation(0.dp)
                             ) {
-                                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    SubcomposeAsyncImage(model = channel.logo, contentDescription = null, modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(premiumBg), contentScale = ContentScale.Crop, error = { Icon(Icons.Default.Tv, null, tint = premiumTextSec) })
-                                    Spacer(modifier = Modifier.width(16.dp))
+                                Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    SubcomposeAsyncImage(model = channel.logo, contentDescription = null, modifier = Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(premiumBg), contentScale = ContentScale.Crop, error = { Icon(Icons.Default.Tv, null, tint = premiumTextSec.copy(alpha = 0.5f)) })
+                                    Spacer(modifier = Modifier.width(14.dp))
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(channel.name, color = premiumAccent, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(channel.name, color = premiumAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(channel.sourceName.ifEmpty { "Source Stream" }, color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                            Text(channel.sourceName.ifEmpty { "Source Stream" }, color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                             if (channel.isDrmProtected) {
                                                 Spacer(modifier = Modifier.width(8.dp))
-                                                Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF27272A)).padding(horizontal = 8.dp, vertical = 2.dp)) {
-                                                    Text("DRM", color = premiumAccent, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                                                Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(premiumSurfaceVariant).padding(horizontal = 8.dp, vertical = 2.dp)) {
+                                                    Text("DRM", color = premiumAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                                 }
                                             }
                                         }
                                     }
-                                    Icon(Icons.Default.PlayCircle, null, tint = premiumAccent, modifier = Modifier.size(32.dp))
+                                    Icon(Icons.Default.PlayCircle, null, tint = premiumBlue, modifier = Modifier.size(32.dp))
                                 }
                             }
                         }

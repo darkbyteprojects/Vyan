@@ -2,7 +2,7 @@ package com.vyan.xtreamplayer.models
 
 import com.google.gson.annotations.SerializedName
 
-data class LiveChannel(
+data class XtreamLiveChannelModel(
     @SerializedName("num") val num: Int,
     @SerializedName("name") val name: String,
     @SerializedName("stream_type") val stream_type: String,

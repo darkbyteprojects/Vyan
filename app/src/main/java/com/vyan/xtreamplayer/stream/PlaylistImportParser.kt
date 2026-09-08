@@ -1,4 +1,4 @@
-package com.vyan.xtreamplayer.utils
+package com.vyan.xtreamplayer.stream
 
 import android.content.Context
 import android.net.Uri
@@ -11,8 +11,9 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStream
 import java.io.InputStreamReader
+import com.vyan.xtreamplayer.utils.NetworkClient
 
-object M3uParser {
+object PlaylistImportParser {
 
     private val client = NetworkClient.defaultClient
 
@@ -79,7 +80,7 @@ object M3uParser {
 
                 val url = getFirstMatchingString(node, URL_KEYS)
 
-                if (url.isNotBlank() && (url.startsWith("http", true) || url.endsWith(".m3u8", true) || url.endsWith(".ts", true))) {
+                if (url.isNotBlank() && (url.startsWith("http", true) || url.endsWith(".m3u8", true) || url.endsWith(".ts", true) || url.endsWith(".mpd", true))) {
                     val finalName = if (nodeKey.isNotBlank() && currentName == parentName && !currentName.contains(nodeKey, true)) {
                         "$currentName (${nodeKey.replaceFirstChar { it.uppercase() }})"
                     } else {
@@ -130,20 +131,19 @@ object M3uParser {
         val cookie = getFirstMatchingString(obj, COOKIE_KEYS)
 
         var finalUrl = resolvedUrl
-        if (!finalUrl.contains("|")) {
-            val pipeParams = mutableListOf<String>()
-            if (ua.isNotBlank()) pipeParams.add("User-Agent=${Uri.encode(ua)}")
-            if (referer.isNotBlank()) pipeParams.add("Referer=${Uri.encode(referer)}")
-            if (origin.isNotBlank()) pipeParams.add("Origin=${Uri.encode(origin)}")
-            if (cookie.isNotBlank()) pipeParams.add("Cookie=${Uri.encode(cookie)}")
+        val pipeParams = mutableListOf<String>()
 
-            // FIX BUG 1: Embed JSON DRM keys directly into the pipe URL
-            if (kId.isNotBlank()) pipeParams.add("keyid=${Uri.encode(kId)}")
-            if (k.isNotBlank()) pipeParams.add("key=${Uri.encode(k)}")
+        if (ua.isNotBlank()) pipeParams.add("User-Agent=${Uri.encode(ua)}")
+        if (referer.isNotBlank()) pipeParams.add("Referer=${Uri.encode(referer)}")
+        if (origin.isNotBlank()) pipeParams.add("Origin=${Uri.encode(origin)}")
+        if (cookie.isNotBlank()) pipeParams.add("Cookie=${Uri.encode(cookie)}")
+        if (kId.isNotBlank()) pipeParams.add("keyid=${Uri.encode(kId)}")
+        if (k.isNotBlank()) pipeParams.add("key=${Uri.encode(k)}")
 
-            if (pipeParams.isNotEmpty()) {
-                finalUrl = "$finalUrl|${pipeParams.joinToString("&")}"
-            }
+        if (pipeParams.isNotEmpty()) {
+            // If a pipe already exists, append with '&'. Otherwise, use '|'.
+            val separator = if (finalUrl.contains("|")) "&" else "|"
+            finalUrl = "$finalUrl$separator${pipeParams.joinToString("&")}"
         }
 
         out.add(
@@ -179,6 +179,7 @@ object M3uParser {
         var pendingTvgId = ""
         var pendingTvgName = ""
         var pendingLicenseKey = ""
+        var pendingLicenseType = ""
         var pendingUserAgent = ""
         var pendingCookie = ""
         var pendingReferer = ""
@@ -205,6 +206,7 @@ object M3uParser {
 
                 when {
                     line.startsWith("#EXTGRP:") -> pendingGroup = line.substring("#EXTGRP:".length).trim()
+                    line.startsWith("#KODIPROP:inputstream.adaptive.license_type=") -> pendingLicenseType = line.substringAfter("=").trim()
                     line.startsWith("#KODIPROP:inputstream.adaptive.license_key=") -> pendingLicenseKey = line.substringAfter("=").trim()
                     line.startsWith("#EXTVLCOPT:http-user-agent=") -> pendingUserAgent = line.substringAfter("=").trim()
                     line.startsWith("#EXTVLCOPT:http-referrer=") -> pendingReferer = line.substringAfter("=").trim()
@@ -239,26 +241,29 @@ object M3uParser {
                 if (line.startsWith("#") || (!line.startsWith("http://", true) && !line.startsWith("https://", true))) continue
 
                 var finalUrl = line
-                if (!finalUrl.contains("|")) {
-                    val pipeParams = mutableListOf<String>()
-                    if (pendingUserAgent.isNotBlank()) pipeParams.add("User-Agent=${Uri.encode(pendingUserAgent)}")
-                    if (pendingReferer.isNotBlank()) pipeParams.add("Referer=${Uri.encode(pendingReferer)}")
-                    if (pendingOrigin.isNotBlank()) pipeParams.add("Origin=${Uri.encode(pendingOrigin)}")
-                    if (pendingCookie.isNotBlank()) pipeParams.add("Cookie=${Uri.encode(pendingCookie)}")
+                val pipeParams = mutableListOf<String>()
 
-                    // FIX BUG 1: Embed M3U #KODIPROP DRM keys directly into the pipe URL
-                    if (pendingLicenseKey.isNotBlank()) {
-                        if (pendingLicenseKey.contains(":")) {
-                            pipeParams.add("keyid=${Uri.encode(pendingLicenseKey.substringBefore(":"))}")
-                            pipeParams.add("key=${Uri.encode(pendingLicenseKey.substringAfter(":"))}")
-                        } else {
-                            pipeParams.add("licenseurl=${Uri.encode(pendingLicenseKey)}")
-                        }
-                    }
+                if (pendingUserAgent.isNotBlank()) pipeParams.add("User-Agent=${Uri.encode(pendingUserAgent)}")
+                if (pendingReferer.isNotBlank()) pipeParams.add("Referer=${Uri.encode(pendingReferer)}")
+                if (pendingOrigin.isNotBlank()) pipeParams.add("Origin=${Uri.encode(pendingOrigin)}")
+                if (pendingCookie.isNotBlank()) pipeParams.add("Cookie=${Uri.encode(pendingCookie)}")
+                if (pendingLicenseType.isNotBlank()) pipeParams.add("licensetype=${Uri.encode(pendingLicenseType)}")
 
-                    if (pipeParams.isNotEmpty()) {
-                        finalUrl = "$finalUrl|${pipeParams.joinToString("&")}"
+                if (pendingLicenseKey.isNotBlank()) {
+                    if (pendingLicenseKey.startsWith("http", ignoreCase = true)) {
+                        pipeParams.add("licenseurl=${Uri.encode(pendingLicenseKey)}")
+                    } else if (pendingLicenseKey.contains(":")) {
+                        pipeParams.add("keyid=${Uri.encode(pendingLicenseKey.substringBefore(":"))}")
+                        pipeParams.add("key=${Uri.encode(pendingLicenseKey.substringAfter(":"))}")
+                    } else {
+                        pipeParams.add("licenseurl=${Uri.encode(pendingLicenseKey)}")
                     }
+                }
+
+                if (pipeParams.isNotEmpty()) {
+                    // If a pipe already exists, append with '&'. Otherwise, use '|'.
+                    val separator = if (finalUrl.contains("|")) "&" else "|"
+                    finalUrl = "$finalUrl$separator${pipeParams.joinToString("&")}"
                 }
 
                 out.add(
@@ -277,7 +282,7 @@ object M3uParser {
 
                 pendingName = null
                 pendingLogo = ""; pendingGroup = ""; pendingTvgId = ""; pendingTvgName = ""
-                pendingLicenseKey = ""; pendingUserAgent = ""; pendingCookie = ""; pendingReferer = ""; pendingOrigin = ""
+                pendingLicenseKey = ""; pendingLicenseType = ""; pendingUserAgent = ""; pendingCookie = ""; pendingReferer = ""; pendingOrigin = ""
             }
         }
         if (out.isEmpty()) throw IllegalArgumentException("No channels found. Invalid format.")

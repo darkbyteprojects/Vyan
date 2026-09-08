@@ -3,9 +3,9 @@ package com.vyan.xtreamplayer.stream
 import java.util.UUID
 
 enum class PlaybackMethod {
-    DIRECT_HTTP,  // Standard HLS/TS (Needs OkHttp Interceptor)
-    LOCAL_PROXY,  // DASH/MPD (Needs Ktor manifest rewriting)
-    WEB_RESOLVER  // Hidden embed (Needs Headless WebView sniffer)
+    DIRECT_HTTP,
+    LOCAL_PROXY,
+    WEB_RESOLVER
 }
 
 data class StreamProfile(

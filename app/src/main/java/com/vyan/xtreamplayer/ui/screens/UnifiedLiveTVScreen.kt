@@ -3,7 +3,6 @@
 package com.vyan.xtreamplayer.ui.screens
 
 import android.content.Context
-import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
@@ -40,13 +39,14 @@ import com.google.gson.reflect.TypeToken
 import com.vyan.xtreamplayer.core.ExtremeSourceConfig
 import com.vyan.xtreamplayer.core.ExtremeSourceRegistry
 import com.vyan.xtreamplayer.core.SourceType
-import com.vyan.xtreamplayer.data.managers.AccountManager
+import com.vyan.xtreamplayer.data.managers.AccountStorageManager
 import com.vyan.xtreamplayer.data.managers.DataCache
+import com.vyan.xtreamplayer.data.managers.AccountTypeChannelLoader
 import com.vyan.xtreamplayer.data.managers.SettingsManager
 import com.vyan.xtreamplayer.models.AccountType
+import com.vyan.xtreamplayer.models.XtreamLiveChannelModel
 import com.vyan.xtreamplayer.network.ScrapedPortal
 import com.vyan.xtreamplayer.network.XtreamApi
-import com.vyan.xtreamplayer.utils.M3uParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,8 +60,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.json.JSONArray
 
 data class UnifiedSource(
@@ -110,21 +108,17 @@ fun matchesChannel(channelName: String, keywords: List<String>): Boolean {
     }
 }
 
-// -------------------------------------------------------------------------
-// UNIFIED SEARCH MANAGER
-// -------------------------------------------------------------------------
 object UnifiedSearchManager {
     val activeSources = mutableStateListOf<UnifiedSource>()
     var isSearching by mutableStateOf(false)
 
     private val searchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var currentSearchJob: Job? = null
-    private val httpClient = OkHttpClient()
 
     fun startBackgroundSearch(
         context: Context,
         channelDef: UnifiedChannelDef,
-        accountManager: AccountManager,
+        accountStorageManager: AccountStorageManager,
         onFirstSourceFound: () -> Unit,
         onNoSourcesFound: () -> Unit
     ) {
@@ -187,8 +181,6 @@ object UnifiedSearchManager {
                 val searchConcurrencyLimit = Semaphore(concurrencyLimit)
 
                 coroutineScope {
-
-                    // 1. EXTREME SOURCES
                     val configsToSearch = allExtremeConfigs.filter { src ->
                         val isCustom = src.id.startsWith("custom_")
                         (isCustom || activeExtremeSources.contains(src.id)) && !unifiedDisabledExtreme.contains(src.id)
@@ -198,11 +190,9 @@ object UnifiedSearchManager {
                         async {
                             if (!isActive) return@async
                             searchConcurrencyLimit.withPermit {
+                                // Updated to bypass the removed ExtremeHubAggregator caching
                                 val channels = try {
-                                    ExtremeHubAggregator.cachedChannels[config.id]
-                                        ?: ExtremeSourceRegistry.fetchChannels(config).also {
-                                            if (it.isNotEmpty()) ExtremeHubAggregator.cachedChannels[config.id] = it
-                                        }
+                                    ExtremeSourceRegistry.fetchChannels(config)
                                 } catch (_: Exception) { emptyList() }
 
                                 for (extCh in channels) {
@@ -230,7 +220,6 @@ object UnifiedSearchManager {
                         }
                     }
 
-                    // 2. DISCOVERED PORTALS
                     if (unifiedUsePortals && isActive) {
                         val prefs = context.getSharedPreferences("DiscoverPrefs", Context.MODE_PRIVATE)
                         val savedJson = prefs.getString("saved_portals", null)
@@ -264,57 +253,38 @@ object UnifiedSearchManager {
                         }
                     }
 
-                    // 3. USER PLAYLISTS (Xtream & M3U)
-                    accountManager.getAccounts().map { acc ->
+                    accountStorageManager.getAccounts().map { acc ->
                         async {
                             if (!isActive) return@async
                             if (explicitlyDisabledPlaylists.contains(acc.id)) return@async
                             if (explicitlySelectedPlaylists != null && !explicitlySelectedPlaylists.contains(acc.id)) return@async
 
                             searchConcurrencyLimit.withPermit {
-                                if (acc.type == AccountType.XTREAM) {
-                                    val cached = DataCache.liveChannels.filterKeys { it.startsWith(acc.id) }.values.flatten()
-                                    val channelsToSearch = if (cached.isNotEmpty()) {
-                                        cached.map { it.name to it.stream_id }
-                                    } else {
-                                        try {
-                                            val res = XtreamApi.service.getLiveStreams(XtreamApi.formatApiUrl(acc.url), acc.username, acc.pass, null)
-                                            if (res.isSuccessful) res.body()?.map { it.name to it.stream_id } ?: emptyList() else emptyList()
-                                        } catch (_: Exception) { emptyList() }
-                                    }
+                                val cached = if (acc.type == AccountType.XTREAM) {
+                                    DataCache.liveChannels.filterKeys { it.startsWith(acc.id) }.values.flatten()
+                                } else emptyList()
 
-                                    for ((chName, streamId) in channelsToSearch) {
-                                        if (!isActive) break
-                                        if (matchesChannel(chName, channelDef.keywords)) {
-                                            val streamUrl = XtreamApi.buildLiveStreamUrl(acc.url, acc.username, acc.pass, streamId)
-                                            addSourceSync(UnifiedSource(
-                                                sourceName = "Playlist: ${acc.alias.ifEmpty { acc.username }}",
-                                                originalChannelName = chName,
-                                                streamUrl = streamUrl,
-                                                sourceType = "IPTV"
-                                            ))
-                                        }
-                                    }
-                                } else {
+                                val channelsToSearch: List<XtreamLiveChannelModel> = cached.ifEmpty {
                                     try {
-                                        val content = if (acc.type == AccountType.M3U_URL) {
-                                            httpClient.newCall(Request.Builder().url(acc.url).build()).execute().body?.string() ?: ""
+                                        AccountTypeChannelLoader.loadAllLiveChannelsFlat(context, acc)
+                                    } catch (_: Exception) { emptyList() }
+                                }
+
+                                for (liveCh in channelsToSearch) {
+                                    if (!isActive) break
+                                    if (matchesChannel(liveCh.name, channelDef.keywords)) {
+                                        val streamUrl = if (acc.type == AccountType.XTREAM) {
+                                            XtreamApi.buildLiveStreamUrl(acc.url, acc.username, acc.pass, liveCh.stream_id)
                                         } else {
-                                            context.contentResolver.openInputStream(Uri.parse(acc.localFilePath))?.bufferedReader()?.use { it.readText() } ?: ""
+                                            liveCh.direct_source ?: continue
                                         }
-                                        val parsedChannels = M3uParser.parse(content)
-                                        for (m3uCh in parsedChannels) {
-                                            if (!isActive) break
-                                            if (matchesChannel(m3uCh.name, channelDef.keywords)) {
-                                                addSourceSync(UnifiedSource(
-                                                    sourceName = "Playlist: ${acc.alias.ifEmpty { acc.username }}",
-                                                    originalChannelName = m3uCh.name,
-                                                    streamUrl = m3uCh.url,
-                                                    sourceType = "IPTV"
-                                                ))
-                                            }
-                                        }
-                                    } catch (_: Exception) {}
+                                        addSourceSync(UnifiedSource(
+                                            sourceName = "Playlist: ${acc.alias.ifEmpty { acc.username }}",
+                                            originalChannelName = liveCh.name,
+                                            streamUrl = streamUrl,
+                                            sourceType = "IPTV"
+                                        ))
+                                    }
                                 }
                             }
                         }
@@ -341,7 +311,7 @@ object UnifiedSearchManager {
 
 object UnifiedConfig {
     val gradients = listOf(
-        listOf(Color(0xFFE50914), Color(0xFFB20710)),
+        listOf(Color(0xFF5288C1), Color(0xFF386794)),
         listOf(Color(0xFF00E5FF), Color(0xFF00838F)),
         listOf(Color(0xFF8A2BE2), Color(0xFF4A148C)),
         listOf(Color(0xFFFF9800), Color(0xFFE65100)),
@@ -492,20 +462,19 @@ object UnifiedConfig {
 @Composable
 fun UnifiedLiveTVScreen(
     settingsManager: SettingsManager,
-    accountManager: AccountManager,
+    accountStorageManager: AccountStorageManager,
     onPlayUnifiedSources: (channelName: String, sources: List<UnifiedSource>) -> Unit
 ) {
-    // PERFECT MEMORY: explicitly save selected provider ID to survive navigation
     var selectedProviderId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedProvider = UnifiedConfig.providers.find { it.id == selectedProviderId }
 
-    // PERFECT MEMORY: explicitly save Grid State
     val gridState = rememberSaveable(saver = LazyGridState.Saver) { LazyGridState() }
 
-    val premiumBg = Color(0xFF09090B)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumTextSec = Color(0xFFA1A1AA)
+    val premiumBg = Color(0xFF0E1621)
+    val premiumSurface = Color(0xFF17212B)
+    val premiumAccent = Color(0xFFFFFFFF)
+    val premiumTextSec = Color(0xFF7F91A4)
+    val premiumBlue = Color(0xFF5288C1)
 
     BackHandler(enabled = selectedProvider != null) {
         selectedProviderId = null
@@ -514,26 +483,26 @@ fun UnifiedLiveTVScreen(
     if (selectedProvider != null) {
         UnifiedCategoryScreen(
             provider = selectedProvider,
-            accountManager = accountManager,
+            accountStorageManager = accountStorageManager,
             onPlayUnifiedSources = onPlayUnifiedSources,
             onBack = { selectedProviderId = null }
         )
     } else {
         Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Unified Mode", color = premiumAccent, fontSize = 32.sp, fontWeight = FontWeight.Black)
+                        Text("Unified Mode", color = premiumAccent, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text("Portals, Playlists & DRM Streams Merged", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Portals, Playlists & DRM Streams Merged", color = premiumTextSec, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     }
                 }
 
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 160.dp),
-                    state = gridState, // <-- Restores scroll memory
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    state = gridState,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(bottom = 40.dp)
                 ) {
                     items(UnifiedConfig.providers.size) { index ->
@@ -544,18 +513,19 @@ fun UnifiedLiveTVScreen(
                             onClick = { selectedProviderId = provider.id },
                             modifier = Modifier.fillMaxWidth().height(130.dp),
                             colors = CardDefaults.cardColors(containerColor = premiumSurface),
-                            shape = RoundedCornerShape(20.dp)
+                            shape = RoundedCornerShape(16.dp),
+                            elevation = CardDefaults.cardElevation(0.dp)
                         ) {
                             Column(modifier = Modifier.fillMaxSize()) {
                                 Box(modifier = Modifier.fillMaxWidth().height(6.dp).background(Brush.horizontalGradient(gradient)))
                                 Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                        Icon(Icons.Default.FolderSpecial, null, tint = premiumAccent, modifier = Modifier.size(32.dp))
+                                        Icon(Icons.Default.FolderSpecial, null, tint = premiumBlue, modifier = Modifier.size(32.dp))
                                     }
                                     Column {
-                                        Text(provider.name, color = premiumAccent, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(provider.name, color = premiumAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Spacer(modifier = Modifier.height(4.dp))
-                                        Text("${provider.channels.size} Channels", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("${provider.channels.size} Channels", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                     }
                                 }
                             }
@@ -570,17 +540,19 @@ fun UnifiedLiveTVScreen(
 @Composable
 fun UnifiedCategoryScreen(
     provider: UnifiedProviderDef,
-    accountManager: AccountManager,
+    accountStorageManager: AccountStorageManager,
     onPlayUnifiedSources: (channelName: String, sources: List<UnifiedSource>) -> Unit,
     onBack: () -> Unit
 ) {
-    val premiumBg = Color(0xFF09090B)
-    val premiumSurface = Color(0xFF18181B)
-    val premiumAccent = Color(0xFFFAFAFA)
-    val premiumTextSec = Color(0xFFA1A1AA)
+    val premiumBg = Color(0xFF0E1621)
+    val premiumSurface = Color(0xFF17212B)
+    val premiumSurfaceVariant = Color(0xFF242F3D)
+    val premiumAccent = Color(0xFFFFFFFF)
+    val premiumTextSec = Color(0xFF7F91A4)
+    val premiumBlue = Color(0xFF5288C1)
+
     val context = LocalContext.current
 
-    // PERFECT MEMORY: Explicitly save search query, expanded state, and List state
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
     val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
@@ -605,16 +577,16 @@ fun UnifiedCategoryScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp).animateContentSize()) {
                 if (isSearchExpanded) {
                     TextField(
                         value = searchQuery, onValueChange = { searchQuery = it }, modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Search channels...", color = premiumTextSec, fontSize = 15.sp) },
-                        leadingIcon = { IconButton(onClick = { isSearchExpanded = false; searchQuery = "" }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = premiumAccent) } },
-                        trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumAccent) } },
-                        shape = CircleShape, singleLine = true,
-                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurface, unfocusedContainerColor = premiumSurface, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
+                        leadingIcon = { IconButton(onClick = { isSearchExpanded = false; searchQuery = "" }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = premiumTextSec) } },
+                        trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null, tint = premiumTextSec) } },
+                        shape = RoundedCornerShape(16.dp), singleLine = true,
+                        colors = TextFieldDefaults.colors(focusedContainerColor = premiumSurfaceVariant, unfocusedContainerColor = premiumSurfaceVariant, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
                     )
                 } else {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -623,19 +595,19 @@ fun UnifiedCategoryScreen(
                         }
                         Spacer(modifier = Modifier.width(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(provider.name, color = premiumAccent, fontSize = 24.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("Select a channel to play instantly", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(provider.name, color = premiumAccent, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("Select a channel to play instantly", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
-                        IconButton(onClick = { isSearchExpanded = true }, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) {
-                            Icon(Icons.Default.Search, "Search", tint = premiumAccent)
+                        IconButton(onClick = { isSearchExpanded = true }, modifier = Modifier.size(42.dp).clip(CircleShape).background(premiumSurface)) {
+                            Icon(Icons.Default.Search, "Search", tint = premiumTextSec)
                         }
                     }
                 }
             }
 
             LazyColumn(
-                state = listState, // <-- Restores scroll memory
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                state = listState,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 40.dp)
             ) {
                 items(provider.channels) { channelDef ->
@@ -647,7 +619,7 @@ fun UnifiedCategoryScreen(
                                 UnifiedSearchManager.startBackgroundSearch(
                                     context = context,
                                     channelDef = channelDef,
-                                    accountManager = accountManager,
+                                    accountStorageManager = accountStorageManager,
                                     onFirstSourceFound = {
                                         isLoading = false
                                         onPlayUnifiedSources(channelDef.name, UnifiedSearchManager.activeSources)
@@ -658,20 +630,20 @@ fun UnifiedCategoryScreen(
                                     }
                                 )
                             },
-                            shape = RoundedCornerShape(20.dp),
+                            shape = RoundedCornerShape(16.dp),
                             colors = CardDefaults.cardColors(containerColor = premiumSurface),
                             elevation = CardDefaults.cardElevation(0.dp)
                         ) {
                             Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(Color(0xFF27272A)), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.Tv, contentDescription = "Channel", tint = premiumAccent)
+                                Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(premiumSurfaceVariant), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Tv, contentDescription = "Channel", tint = premiumBlue, modifier = Modifier.size(22.dp))
                                 }
                                 Spacer(modifier = Modifier.width(16.dp))
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(text = channelDef.name, color = premiumAccent, fontSize = 17.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(text = "Tap to play instantly", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.SemiBold)
+                                    Text(text = channelDef.name, color = premiumAccent, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(text = "Tap to play instantly", fontSize = 13.sp, color = premiumTextSec, fontWeight = FontWeight.Medium)
                                 }
-                                Icon(Icons.Default.PlayCircleFilled, null, tint = premiumAccent, modifier = Modifier.size(32.dp))
+                                Icon(Icons.Default.PlayCircleFilled, null, tint = premiumBlue, modifier = Modifier.size(32.dp))
                             }
                         }
                     }
@@ -689,15 +661,15 @@ fun UnifiedCategoryScreen(
             ) {
                 Card(
                     modifier = Modifier.width(280.dp),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = premiumSurface)
                 ) {
                     Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = premiumAccent, modifier = Modifier.size(48.dp), strokeWidth = 4.dp)
+                        CircularProgressIndicator(color = premiumBlue, modifier = Modifier.size(44.dp), strokeWidth = 3.5.dp)
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text(loadingChannelName, color = premiumAccent, fontSize = 18.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+                        Text(loadingChannelName, color = premiumAccent, fontSize = 17.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("Searching all sources...", color = Color(0xFFFF9800), fontSize = 14.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                        Text("Searching all sources...", color = premiumTextSec, fontSize = 13.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
                     }
                 }
             }

@@ -31,7 +31,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.vyan.xtreamplayer.data.managers.AccountManager
+import com.vyan.xtreamplayer.data.managers.AccountStorageManager
 import com.vyan.xtreamplayer.models.AccountType
 import com.vyan.xtreamplayer.models.UserAccount
 import com.vyan.xtreamplayer.network.XtreamApi
@@ -45,8 +45,16 @@ fun cleanXtreamUrl(rawUrl: String): String {
 }
 
 @Composable
-fun LoginScreen(accountManager: AccountManager, onLoginSuccess: () -> Unit, onBack: () -> Unit) {
-    val premiumBg = Color(0xFF09090B); val premiumSurface = Color(0xFF18181B); val premiumAccent = Color(0xFFFAFAFA); val premiumTextSec = Color(0xFFA1A1AA); val premiumRed = Color(0xFFE50914)
+fun LoginScreen(accountStorageManager: AccountStorageManager, onLoginSuccess: () -> Unit, onBack: () -> Unit) {
+    // Telegram-Style Glass Palette
+    val premiumBg = Color(0xFF0E1621)
+    val premiumSurface = Color(0xFF17212B)
+    val premiumSurfaceVariant = Color(0xFF242F3D)
+    val premiumAccent = Color(0xFFFFFFFF)
+    val premiumTextSec = Color(0xFF7F91A4)
+    val premiumRed = Color(0xFFE53935)
+    val premiumBlue = Color(0xFF5288C1)
+
     val context = LocalContext.current; val scope = rememberCoroutineScope()
     var selectedType by remember { mutableStateOf(AccountType.XTREAM) }; var alias by remember { mutableStateOf("") }; var serverUrl by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }; var isPasswordVisible by remember { mutableStateOf(false) }
@@ -55,32 +63,31 @@ fun LoginScreen(accountManager: AccountManager, onLoginSuccess: () -> Unit, onBa
     var isLoading by remember { mutableStateOf(false) }; var errorMessage by remember { mutableStateOf<String?>(null) }
 
     Box(modifier = Modifier.fillMaxSize().background(premiumBg).statusBarsPadding()) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp).verticalScroll(rememberScrollState())) {
-            // FIXED: Top Padding reduced to 8.dp
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 32.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(48.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = premiumAccent) }
-                Spacer(modifier = Modifier.width(20.dp))
-                Text(text = "Add Playlist", color = premiumAccent, fontSize = 32.sp, fontWeight = FontWeight.Black)
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack, modifier = Modifier.clip(CircleShape).background(premiumSurface).size(42.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = premiumAccent) }
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(text = "Add Playlist", color = premiumAccent, fontSize = 26.sp, fontWeight = FontWeight.Bold)
             }
 
-            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(premiumSurface).padding(8.dp)) {
+            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(premiumSurface).padding(6.dp)) {
                 LoginTypeTab(title = "Xtream", isSelected = selectedType == AccountType.XTREAM, modifier = Modifier.weight(1f)) { selectedType = AccountType.XTREAM; errorMessage = null }
                 LoginTypeTab(title = "M3U Link", isSelected = selectedType == AccountType.M3U_URL, modifier = Modifier.weight(1f)) { selectedType = AccountType.M3U_URL; errorMessage = null }
                 LoginTypeTab(title = "Local File", isSelected = selectedType == AccountType.M3U_FILE, modifier = Modifier.weight(1f)) { selectedType = AccountType.M3U_FILE; errorMessage = null }
             }
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(32.dp))
 
-            val textFieldColors = TextFieldDefaults.colors(focusedContainerColor = premiumSurface, unfocusedContainerColor = premiumSurface, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
+            val textFieldColors = TextFieldDefaults.colors(focusedContainerColor = premiumSurfaceVariant, unfocusedContainerColor = premiumSurfaceVariant, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = premiumAccent, unfocusedTextColor = premiumAccent)
 
             TextField(value = alias, onValueChange = { alias = it }, placeholder = { Text("Playlist Name (Optional)", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = textFieldColors, singleLine = true)
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             when (selectedType) {
                 AccountType.XTREAM -> {
                     TextField(value = serverUrl, onValueChange = { serverUrl = it }, placeholder = { Text("Server URL (http://...)", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = textFieldColors, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     TextField(value = username, onValueChange = { username = it }, placeholder = { Text("Username", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = textFieldColors, singleLine = true)
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     TextField(
                         value = password, onValueChange = { password = it }, placeholder = { Text("Password", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = textFieldColors, singleLine = true,
                         visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
@@ -89,24 +96,24 @@ fun LoginScreen(accountManager: AccountManager, onLoginSuccess: () -> Unit, onBa
                 }
                 AccountType.M3U_URL -> { TextField(value = m3uUrl, onValueChange = { m3uUrl = it }, placeholder = { Text("M3U / M3U8 Link", color = premiumTextSec, fontWeight = FontWeight.Medium) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = textFieldColors, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)) }
                 AccountType.M3U_FILE -> {
-                    Card(modifier = Modifier.fillMaxWidth().height(160.dp).clickable { filePickerLauncher.launch(arrayOf("*/*")) }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                    Card(modifier = Modifier.fillMaxWidth().height(140.dp).clickable { filePickerLauncher.launch(arrayOf("*/*")) }, colors = CardDefaults.cardColors(containerColor = premiumSurface), shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                         Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                            Icon(Icons.Default.UploadFile, contentDescription = null, tint = premiumAccent, modifier = Modifier.size(48.dp)); Spacer(modifier = Modifier.height(16.dp))
-                            Text(text = if (selectedFileUri == null) "Tap to select .m3u file" else "File Selected", color = if (selectedFileUri == null) premiumTextSec else premiumAccent, fontWeight = FontWeight.Black, fontSize = 18.sp)
+                            Icon(Icons.Default.UploadFile, contentDescription = null, tint = premiumBlue, modifier = Modifier.size(44.dp)); Spacer(modifier = Modifier.height(12.dp))
+                            Text(text = if (selectedFileUri == null) "Tap to select .m3u file" else "File Selected", color = if (selectedFileUri == null) premiumTextSec else premiumAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         }
                     }
                 }
             }
 
             if (errorMessage != null) {
-                Spacer(modifier = Modifier.height(24.dp))
-                Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(premiumRed.copy(alpha = 0.1f)).padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.ErrorOutline, null, tint = premiumRed, modifier = Modifier.size(28.dp)); Spacer(modifier = Modifier.width(16.dp))
-                    Text(errorMessage!!, color = premiumRed, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(20.dp))
+                Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(premiumRed.copy(alpha = 0.15f)).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.ErrorOutline, null, tint = premiumRed, modifier = Modifier.size(24.dp)); Spacer(modifier = Modifier.width(14.dp))
+                    Text(errorMessage!!, color = premiumRed, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(36.dp))
             Button(
                 onClick = {
                     if (isLoading) return@Button
@@ -128,7 +135,7 @@ fun LoginScreen(accountManager: AccountManager, onLoginSuccess: () -> Unit, onBa
                                             alias = finalAlias,
                                             type = AccountType.XTREAM
                                         )
-                                        accountManager.addAccount(acc); accountManager.setActiveAccount(acc.id); onLoginSuccess()
+                                        accountStorageManager.addAccount(acc); accountStorageManager.setActiveAccount(acc.id); onLoginSuccess()
                                     } else { errorMessage = "Invalid credentials or dead server." }
                                 } catch (e: Exception) { errorMessage = "Network error: Cannot reach server." } finally { isLoading = false }
                             }
@@ -143,7 +150,7 @@ fun LoginScreen(accountManager: AccountManager, onLoginSuccess: () -> Unit, onBa
                                 alias = finalAlias,
                                 type = AccountType.M3U_URL
                             )
-                            accountManager.addAccount(acc); accountManager.setActiveAccount(acc.id); onLoginSuccess()
+                            accountStorageManager.addAccount(acc); accountStorageManager.setActiveAccount(acc.id); onLoginSuccess()
                         }
                         AccountType.M3U_FILE -> {
                             if (selectedFileUri == null) { errorMessage = "Please select a file from your device"; return@Button }
@@ -156,14 +163,14 @@ fun LoginScreen(accountManager: AccountManager, onLoginSuccess: () -> Unit, onBa
                                 alias = finalAlias,
                                 type = AccountType.M3U_FILE
                             )
-                            accountManager.addAccount(acc); accountManager.setActiveAccount(acc.id); onLoginSuccess()
+                            accountStorageManager.addAccount(acc); accountStorageManager.setActiveAccount(acc.id); onLoginSuccess()
                         }
                     }
                 },
-                modifier = Modifier.fillMaxWidth().height(64.dp), shape = RoundedCornerShape(20.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumAccent)
+                modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = premiumBlue, contentColor = premiumAccent)
             ) {
-                if (isLoading) CircularProgressIndicator(color = premiumBg, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
-                else Text("Add Playlist", fontSize = 18.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, color = premiumBg)
+                if (isLoading) CircularProgressIndicator(color = premiumAccent, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+                else Text("Add Playlist", fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif)
             }
         }
     }
@@ -171,11 +178,14 @@ fun LoginScreen(accountManager: AccountManager, onLoginSuccess: () -> Unit, onBa
 
 @Composable
 fun LoginTypeTab(title: String, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val premiumAccent = Color(0xFFFFFFFF)
+    val premiumTextSec = Color(0xFF7F91A4)
+    val premiumBlue = Color(0xFF5288C1)
+
     Box(
-        modifier = modifier.clip(RoundedCornerShape(14.dp)).background(if (isSelected) Color(0xFFFAFAFA) else Color.Transparent).clickable { onClick() }.padding(vertical = 14.dp),
+        modifier = modifier.clip(RoundedCornerShape(12.dp)).background(if (isSelected) premiumBlue else Color.Transparent).clickable { onClick() }.padding(vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
-        // FIXED: Bold + Standard Font for Tabs
-        Text(text = title, color = if (isSelected) Color(0xFF09090B) else Color(0xFFA1A1AA), fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, fontSize = 15.sp)
+        Text(text = title, color = if (isSelected) premiumAccent else premiumTextSec, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 14.sp)
     }
 }
