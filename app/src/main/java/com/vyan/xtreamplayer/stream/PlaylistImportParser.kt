@@ -17,7 +17,8 @@ object PlaylistImportParser {
 
     private val client = NetworkClient.defaultClient
 
-    private val URL_KEYS = listOf("m3u8", "stream_url", "url", "link", "play_url", "src", "file", "video_url", "source")
+    // Added "mpd_url" and "dash_url" to support the new JSON formats
+    private val URL_KEYS = listOf("m3u8", "stream_url", "url", "link", "play_url", "src", "file", "video_url", "source", "mpd_url", "dash_url")
     private val NAME_KEYS = listOf("title", "name", "match_name", "channel_name", "stream_display_name", "ch_name")
     private val LOGO_KEYS = listOf("logo", "icon", "poster_image", "stream_icon", "tvg-logo", "pic", "image")
     private val GROUP_KEYS = listOf("genre", "category", "stage", "group-title", "category_name", "group")
@@ -117,6 +118,8 @@ object PlaylistImportParser {
     ) {
         val kId = getFirstMatchingString(obj, KEY_ID_KEYS)
         val k = getFirstMatchingString(obj, KEY_KEYS)
+        // Extract license URL directly
+        val licenseUrl = obj.optString("license_url", obj.optString("licenseUrl", obj.optString("drm_license_url", "")))
 
         val combinedKeyId = when {
             kId.isNotBlank() && k.isNotBlank() && !kId.contains(":") -> "$kId:$k"
@@ -125,10 +128,21 @@ object PlaylistImportParser {
             else -> ""
         }
 
-        val referer = obj.optString("referer", obj.optString("Referer", ""))
-        val origin = obj.optString("origin", obj.optString("Origin", ""))
-        val ua = getFirstMatchingString(obj, UA_KEYS)
-        val cookie = getFirstMatchingString(obj, COOKIE_KEYS)
+        // Support for nested headers object
+        val headersObj = obj.optJSONObject("headers") ?: obj.optJSONObject("http_headers")
+
+        val referer = obj.optString("referer", obj.optString("Referer", "")).ifBlank {
+            headersObj?.optString("referer", headersObj.optString("Referer", "")) ?: ""
+        }
+        val origin = obj.optString("origin", obj.optString("Origin", "")).ifBlank {
+            headersObj?.optString("origin", headersObj.optString("Origin", "")) ?: ""
+        }
+        val ua = getFirstMatchingString(obj, UA_KEYS).ifBlank {
+            headersObj?.let { getFirstMatchingString(it, UA_KEYS) } ?: ""
+        }
+        val cookie = getFirstMatchingString(obj, COOKIE_KEYS).ifBlank {
+            headersObj?.let { getFirstMatchingString(it, COOKIE_KEYS) } ?: ""
+        }
 
         var finalUrl = resolvedUrl
         val pipeParams = mutableListOf<String>()
@@ -139,9 +153,9 @@ object PlaylistImportParser {
         if (cookie.isNotBlank()) pipeParams.add("Cookie=${Uri.encode(cookie)}")
         if (kId.isNotBlank()) pipeParams.add("keyid=${Uri.encode(kId)}")
         if (k.isNotBlank()) pipeParams.add("key=${Uri.encode(k)}")
+        if (licenseUrl.isNotBlank()) pipeParams.add("licenseurl=${Uri.encode(licenseUrl)}")
 
         if (pipeParams.isNotEmpty()) {
-            // If a pipe already exists, append with '&'. Otherwise, use '|'.
             val separator = if (finalUrl.contains("|")) "&" else "|"
             finalUrl = "$finalUrl$separator${pipeParams.joinToString("&")}"
         }
@@ -191,9 +205,39 @@ object PlaylistImportParser {
                 if (line.isEmpty() || line.startsWith("#EXTM3U")) continue
 
                 if (line.startsWith("#EXTINF")) {
-                    val commaIdx = line.indexOf(',')
-                    val attrPart = if (commaIdx > 0) line.substring("#EXTINF".length, commaIdx) else line.substring("#EXTINF".length)
-                    val namePart = if (commaIdx > 0) line.substring(commaIdx + 1).trim() else ""
+                    var inQuotes = false
+                    var firstCommaIdx = -1
+                    var separatorCommaIdx = -1
+
+                    // Smart Comma Detector: Scan the line to find the REAL comma separating attributes from the title
+                    for (i in "#EXTINF".length until line.length) {
+                        if (line[i] == '"') {
+                            inQuotes = !inQuotes
+                        } else if (line[i] == ',' && !inQuotes) {
+                            if (firstCommaIdx == -1) firstCommaIdx = i
+
+                            // Check if the text after this comma looks like an attribute (e.g., tvg-logo=)
+                            val nextPart = line.substring(i + 1)
+                            val attrRegex = Regex("""^\s*[a-zA-Z0-9_\-]+=""")
+
+                            if (attrRegex.containsMatchIn(nextPart)) {
+                                // This is a fake comma (like after -1). Keep scanning.
+                                continue
+                            } else {
+                                // No attribute follows this comma. This is the REAL title separator.
+                                separatorCommaIdx = i
+                                break
+                            }
+                        }
+                    }
+
+                    // Fallback to the first comma if no perfect separator was found
+                    if (separatorCommaIdx == -1) {
+                        separatorCommaIdx = firstCommaIdx
+                    }
+
+                    val attrPart = if (separatorCommaIdx > 0) line.substring("#EXTINF".length, separatorCommaIdx) else line.substring("#EXTINF".length)
+                    val namePart = if (separatorCommaIdx > 0) line.substring(separatorCommaIdx + 1).trim() else ""
 
                     val attrs = parseAttrs(attrPart)
                     pendingTvgId = attrs["tvg-id"] ?: ""
@@ -261,7 +305,6 @@ object PlaylistImportParser {
                 }
 
                 if (pipeParams.isNotEmpty()) {
-                    // If a pipe already exists, append with '&'. Otherwise, use '|'.
                     val separator = if (finalUrl.contains("|")) "&" else "|"
                     finalUrl = "$finalUrl$separator${pipeParams.joinToString("&")}"
                 }

@@ -142,9 +142,13 @@ object LocalStreamProxy {
 
                     val retryBuilder = Request.Builder().url(finalUpstreamUrl)
                     headersMap.forEach { (k, v) ->
-                        // FIX: We MUST keep Origin and Referer during the fallback,
-                        // only omitting the old User-Agent so we can replace it below.
-                        if (v.isNotBlank() && !k.equals("User-Agent", ignoreCase = true)) {
+                        // FIX: We must completely strip Origin and Referer headers for the fallback.
+                        // Native STB/Mobile apps do not send these headers. Sending them alongside
+                        // a native User-Agent triggers the WAF's spoof detection.
+                        if (v.isNotBlank() &&
+                            !k.equals("User-Agent", ignoreCase = true) &&
+                            !k.equals("Origin", ignoreCase = true) &&
+                            !k.equals("Referer", ignoreCase = true)) {
                             retryBuilder.header(k, v)
                         }
                     }
