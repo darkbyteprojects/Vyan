@@ -12,6 +12,8 @@ object PlaybackMethodRouter {
         "JioTVPlus/2.8.4_2076/StreamFlex(StreamFlex;JioSTB) JioTvPlus-AndroidTv"
     const val JIO_MOBILE_UA =
         "plaYtv/7.1.3 (Linux;Android 13) - @Vortex Tv - ExoPlayerLib/824.0"
+    const val HOTSTAR_UA =
+        "Hotstar;in.startv.hotstar/25.02.24.8.11169@Premium Plugx(Android/15)"
 
     fun decideAndRoute(profile: StreamProfile): StreamProfile {
         val routed = profile.copy(
@@ -36,31 +38,70 @@ object PlaybackMethodRouter {
         val existingUa = profile.headers["User-Agent"] ?: profile.headers["user-agent"]
         val urlLower = profile.playUrl.lowercase()
 
-        // 1. Keep the explicit User-Agent if provided by the playlist
-        // 2. Only apply Jio defaults if the playlist provided NO User-Agent
+        // 1. Configure User-Agent: Block known IPTV player names and force native UAs for specific CDNs
+        val isBlacklistedUa = existingUa.isNullOrBlank() ||
+                existingUa.contains("OTT Navigator", ignoreCase = true) ||
+                existingUa.contains("VLC", ignoreCase = true)
+
         val selectedUa = when {
-            !existingUa.isNullOrBlank() -> existingUa
+            urlLower.contains("hotstar") || urlLower.contains("hotstar-cdn") -> HOTSTAR_UA
             urlLower.contains("jiotvbpkstb") || urlLower.contains("jio.com") -> JIO_STB_UA
             urlLower.contains("mblive") -> JIO_MOBILE_UA
+            !isBlacklistedUa -> existingUa!!
             else -> DEFAULT_BROWSER_UA
         }
         profile.headers["User-Agent"] = selectedUa
 
+        // 2. Check if UA represents a native STB / Mobile device
         val isNativeApp = selectedUa.contains("JioSTB", ignoreCase = true) ||
                 selectedUa.contains("plaYtv", ignoreCase = true) ||
+                selectedUa.contains("Hotstar", ignoreCase = true) ||
                 selectedUa.contains("ExoPlayer", ignoreCase = true)
 
-        if (!isNativeApp) {
-            // Only auto-generate Origin/Referer for web streams if they don't already exist
-            try {
-                val uri = Uri.parse(profile.playUrl)
-                val host = uri.host
-                if (!host.isNullOrBlank()) {
-                    val origin = "${uri.scheme ?: "https"}://$host"
-                    profile.headers.putIfAbsent("Origin", origin)
-                    profile.headers.putIfAbsent("Referer", "$origin/")
+        if (isNativeApp) {
+            // Native STB/Apps generally do not send browser Origin/Referer headers
+            // (Unless explicitly forced below)
+            profile.headers.remove("Origin")
+            profile.headers.remove("Referer")
+            profile.headers.remove("origin")
+            profile.headers.remove("referer")
+        }
+
+        // 3. Intelligently generate Origin/Referer for Web CDNs or explicitly mapped streams
+        val existingOrigin = profile.headers["Origin"] ?: profile.headers["origin"]
+        val existingReferer = profile.headers["Referer"] ?: profile.headers["referer"]
+
+        // Force Hotstar headers if URL requires it
+        if (urlLower.contains("hotstar")) {
+            profile.headers["Origin"] = "https://www.hotstar.com"
+            profile.headers["Referer"] = "https://www.hotstar.com/"
+        } else if (!isNativeApp) {
+            if (existingOrigin.isNullOrBlank()) {
+                var generatedOrigin: String? = null
+
+                if (!existingReferer.isNullOrBlank()) {
+                    try {
+                        val refUri = android.net.Uri.parse(existingReferer)
+                        if (!refUri.host.isNullOrBlank()) {
+                            generatedOrigin = "${refUri.scheme ?: "https"}://${refUri.host}"
+                        }
+                    } catch (_: Exception) {}
                 }
-            } catch (_: Exception) {}
+
+                if (generatedOrigin.isNullOrBlank()) {
+                    try {
+                        val streamUri = android.net.Uri.parse(profile.playUrl)
+                        if (!streamUri.host.isNullOrBlank()) {
+                            generatedOrigin = "${streamUri.scheme ?: "https"}://${streamUri.host}"
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (!generatedOrigin.isNullOrBlank()) {
+                    profile.headers["Origin"] = generatedOrigin
+                    profile.headers.putIfAbsent("Referer", "$generatedOrigin/")
+                }
+            }
         }
     }
 

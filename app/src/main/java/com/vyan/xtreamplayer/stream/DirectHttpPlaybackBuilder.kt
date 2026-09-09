@@ -58,10 +58,12 @@ object DirectHttpPlaybackBuilder {
             .cookieJar(localCookieJar)
             .addInterceptor { chain ->
                 val request = chain.request()
-                // Logs EVERY native ExoPlayer request (.m3u8, keys, proxy connections)
                 android.util.Log.e("EXO_NETWORK", "Executing Request to: ${request.url}")
                 android.util.Log.e("EXO_NETWORK", "Outbound Headers: \n${request.headers}")
-                chain.proceed(request)
+                val response = chain.proceed(request)
+                // FIX: Log the actual HTTP response code from the CDN
+                android.util.Log.e("EXO_NETWORK", "CDN Response Status: ${response.code} for ${request.url}")
+                response
             }
             .build()
 
