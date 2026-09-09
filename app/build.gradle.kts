@@ -12,17 +12,38 @@ android {
         minSdk = 24
         // Target 36 to match
         targetSdk = 36
-        versionCode = 7
-        versionName = "v0.00.07"
+        versionCode = 8 // MUST strictly increase with every single build (beta or stable)
+        versionName = "v0.00.08" // The base version you are working towards
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
-        release {
+        // 1. Stable Production Build
+        getByName("release") {
             isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+
+        // 2. Pre-release / Beta Build
+        create("prerelease") {
+            initWith(getByName("release")) // Inherits all settings from "release"
+
+            // Appends "-beta" to your versionName (e.g., "v0.00.08-beta")
+            versionNameSuffix = "-beta"
+
+            // Appends ".beta" to your package name so you can install both the stable
+            // and beta versions on your device simultaneously.
+            applicationIdSuffix = ".beta"
+
+            // Optional: Enables debugging in the pre-release build even though it's built like a release
+            isDebuggable = true
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
