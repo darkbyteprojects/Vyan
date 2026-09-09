@@ -41,6 +41,8 @@ android {
 
             // Optional: Enables debugging in the pre-release build even though it's built like a release
             isDebuggable = true
+
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
