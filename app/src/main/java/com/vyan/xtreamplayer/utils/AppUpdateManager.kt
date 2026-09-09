@@ -56,9 +56,12 @@ object AppUpdateManager {
                 val response = connection.inputStream.bufferedReader().readText()
                 val json = JSONObject(response)
                 val latestVersion = json.getString("version").removePrefix("v").trim()
-                val currentClean = currentVersion.removePrefix("v").trim()
 
-                if (latestVersion != currentClean) {
+                // Strip prefixes and suffixes like "-beta" for comparison
+                val currentClean = currentVersion.removePrefix("v").substringBefore("-").trim()
+
+                // Only prompt an update if the remote version is strictly newer
+                if (isNewerVersion(latestVersion, currentClean)) {
                     val body = json.optString("release_notes", "Bug fixes and performance improvements.")
                     val downloadUrl = json.getString("download_url")
                     return@withContext GithubReleaseInfo(latestVersion, body, downloadUrl)
@@ -68,6 +71,22 @@ object AppUpdateManager {
         } catch (_: Exception) {
             null
         }
+    }
+
+    // Compares semantic versions (e.g., "0.00.09" > "0.00.08")
+    private fun isNewerVersion(remote: String, local: String): Boolean {
+        if (remote == local) return false
+        val remoteParts = remote.split(".").mapNotNull { it.toIntOrNull() }
+        val localParts = local.split(".").mapNotNull { it.toIntOrNull() }
+        val maxLength = maxOf(remoteParts.size, localParts.size)
+
+        for (i in 0 until maxLength) {
+            val r = remoteParts.getOrElse(i) { 0 }
+            val l = localParts.getOrElse(i) { 0 }
+            if (r > l) return true
+            if (r < l) return false
+        }
+        return false
     }
 }
 
