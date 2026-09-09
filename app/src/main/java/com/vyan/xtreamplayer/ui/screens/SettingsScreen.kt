@@ -87,7 +87,6 @@ fun parseCustomCategoryFile(text: String): List<UserCustomCategory> {
 
 @Composable
 fun SettingsSectionHeader(title: String, icon: ImageVector) {
-    // Telegram-Style Glass Palette
     val premiumAccent = Color(0xFFFFFFFF)
     val premiumSurface = Color(0xFF17212B)
     val premiumBlue = Color(0xFF5288C1)
@@ -111,6 +110,15 @@ fun SettingsScreen(settingsManager: SettingsManager, accountStorageManager: Acco
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    val appVersion = remember {
+        try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            pInfo.versionName ?: "Unknown"
+        } catch (_: Exception) {
+            "Unknown"
+        }
+    }
 
     var currentSettingsPage by rememberSaveable { mutableStateOf("main") }
 
@@ -271,6 +279,17 @@ fun SettingsScreen(settingsManager: SettingsManager, accountStorageManager: Acco
                                     Icon(Icons.Default.ChevronRight, null, tint = premiumTextSec)
                                 }
                             }
+                        }
+                        item {
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Text(
+                                text = "XtreamPlayer $appVersion",
+                                color = premiumTextSec.copy(alpha = 0.5f),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                            )
                         }
                     }
                 }
