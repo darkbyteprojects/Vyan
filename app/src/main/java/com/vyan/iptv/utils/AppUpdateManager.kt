@@ -46,7 +46,7 @@ object AppUpdateManager {
     // FIXED: Added 'suspend' keyword here
     suspend fun checkGithubForUpdate(currentVersion: String): GithubReleaseInfo? = withContext(Dispatchers.IO) {
         try {
-            val url = URL("https://vyan.dbprojects.workers.dev/release/latest")
+            val url = URL("https://dbprojects.workers.dev/release/latest")
             val connection = url.openConnection() as HttpURLConnection
             connection.connectTimeout = 5000
             connection.readTimeout = 5000
