@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.vyan.xtreamplayer"
+    namespace = "com.vyan.iptv"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.vyan.xtreamplayer"
+        applicationId = "com.vyan.iptv"
         minSdk = 24
         // Target 36 to match
         targetSdk = 36
